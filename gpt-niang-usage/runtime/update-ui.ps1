@@ -4,7 +4,7 @@ function Initialize-WidgetUpdater {
   $script:autoUpdate=!($preferences -and $preferences.automatic-eq $false)
 }
 function Test-WidgetUpdateEditor {
-  return [bool](($script:quoteEditor -and $script:quoteEditor.IsVisible) -or ($script:colorTriggerEditor -and $script:colorTriggerEditor.IsVisible))
+  return [bool](($script:quoteEditor -and $script:quoteEditor.IsVisible) -or ($script:colorTriggerEditor -and $script:colorTriggerEditor.IsVisible) -or ($script:chatPanel -and $script:chatPanel.IsVisible))
 }
 function Start-WidgetUpdate([string]$Mode='manual') {
   if($script:updateProcess){if(!$script:updateProcess.HasExited){return};$script:updateProcess.Dispose();$script:updateProcess=$null}
@@ -50,7 +50,7 @@ function Update-WidgetUpdateMenu {
 }
 function Tick-WidgetUpdater([long]$Now) {
   if($Now-$script:updateLastTick-lt 1000){return};$script:updateLastTick=$Now
-  Write-WidgetSupervisorJson (Join-Path $script:dataDir 'update-idle.json') @{at=$Now;pid=$PID;editor=(Test-WidgetUpdateEditor);menu=[bool]$script:context.IsOpen;drag=[bool]$script:drag}
+  Write-WidgetSupervisorJson (Join-Path $script:dataDir 'update-idle.json') @{at=$Now;pid=$PID;editor=(Test-WidgetUpdateEditor);menu=[bool]$script:context.IsOpen;drag=[bool]($script:drag -or $script:peekDrag)}
   if($script:updateProcess -and $script:updateProcess.HasExited){
     if($script:updateProcess.ExitCode-ne 0){Write-WidgetSupervisorJson (Join-Path $script:dataDir 'update-status.json') @{phase='failed';message='更新进程异常退出，请检查安装配置后再重试。';nextCheckAt=$Now+86400000}}
     $script:updateProcess.Dispose();$script:updateProcess=$null

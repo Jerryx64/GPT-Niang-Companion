@@ -113,6 +113,27 @@ function Initialize-WidgetSettingsMenu {
 <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="ContextMenu"><Border Background="#FFFCFF" BorderBrush="#DFD1EC" BorderThickness="1" CornerRadius="12" Padding="9,8"><ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False"><ItemsPresenter/></ScrollViewer></Border></ControlTemplate>
 '@)
   $script:settingsMenuUi.Bubble=Add-SettingsAction '查看额度' {if(!$script:collapsed -and $script:bubbleMode-eq 'quota'){Hide-Quota}else{Show-Quota}} -ReturnItem
+  Add-SettingsAction '聊天与运行情况' {Open-WidgetChatPanel}
+  $script:settingsMenuUi.ChatBehavior=Add-SettingsSubmenu '聊天显示与收起' {
+    $script:settingsMenuUi.ChatTaskOnly=Add-SettingsAction '有任务时自动出现' {param($sender,$event)$script:chatTaskOnly=$sender.IsChecked;Save-Settings;Update-WidgetChats;Tick-WidgetChatBehavior} -Description '无任务自动隐藏；关闭后手动打开' -Checkable -ReturnItem
+    $script:settingsMenuUi.ChatBlur=Add-SettingsAction '焦点变化后收成小点' {param($sender,$event)$script:chatCollapseOnBlur=$sender.IsChecked;Save-Settings;Tick-WidgetChatBehavior} -Description '点击小点可重新展开，输入草稿会保留' -Checkable -ReturnItem
+    $script:settingsMenuUi.ChatAutoCollapse=Add-SettingsAction '无操作时收成小点' {param($sender,$event)$script:chatAutoCollapse=$sender.IsChecked;Save-Settings;Update-WidgetSettingsMenu;Tick-WidgetChatBehavior} -Description '先显示任务状态，未点击则延时收起' -Checkable -ReturnItem
+    $script:settingsMenuUi.ChatMotion=Add-SettingsAction '三个小点轮动' {param($sender,$event)$script:chatDotsMotion=$sender.IsChecked;Set-WidgetChatDotAnimation;Save-Settings} -Checkable -ReturnItem
+    $script:settingsMenuUi.ChatAttention=Add-SettingsAction '需要操作时显示气泡' {param($sender,$event)$script:chatAttentionBubble=$sender.IsChecked;Save-Settings} -Description '等老大授权、回答问题或处理异常' -Checkable -ReturnItem
+    Add-SettingsDivider
+    $auto=New-SettingsSlider '状态提示停留时间' 0 60 1
+    $script:settingsMenuUi.ChatAutoCollapseDelay=$auto.Slider;$script:settingsMenuUi.ChatAutoCollapseDelayText=$auto.Value;$auto.Slider.Value=$script:chatAutoCollapseDelaySeconds
+    $auto.Slider.Add_ValueChanged({param($sender,$event)if($script:settingsMenuSync){return};$script:chatAutoCollapseDelaySeconds=[Math]::Round($sender.Value);$script:settingsMenuUi.ChatAutoCollapseDelayText.Text=$script:chatAutoCollapseDelaySeconds.ToString()+' 秒';Save-Settings;Tick-WidgetChatBehavior})
+    Add-SettingsPanel $auto.Panel
+    $delay=New-SettingsSlider '焦点变化后收起' 0 60 1
+    $script:settingsMenuUi.ChatBlurDelay=$delay.Slider;$script:settingsMenuUi.ChatBlurDelayText=$delay.Value;$delay.Slider.Value=$script:chatBlurDelaySeconds
+    $delay.Slider.Add_ValueChanged({param($sender,$event)if($script:settingsMenuSync){return};$script:chatBlurDelaySeconds=[Math]::Round($sender.Value);$script:settingsMenuUi.ChatBlurDelayText.Text=$script:chatBlurDelaySeconds.ToString()+' 秒';Save-Settings;Tick-WidgetChatBehavior})
+    Add-SettingsPanel $delay.Panel
+    $idle=New-SettingsSlider '任务结束后隐藏' 0 60 1
+    $script:settingsMenuUi.ChatIdleDelay=$idle.Slider;$script:settingsMenuUi.ChatIdleDelayText=$idle.Value;$idle.Slider.Value=$script:chatIdleDelaySeconds
+    $idle.Slider.Add_ValueChanged({param($sender,$event)if($script:settingsMenuSync){return};$script:chatIdleDelaySeconds=[Math]::Round($sender.Value);$script:settingsMenuUi.ChatIdleDelayText.Text=$script:chatIdleDelaySeconds.ToString()+' 秒';Save-Settings;Tick-WidgetChatBehavior})
+    Add-SettingsPanel $idle.Panel
+  } -ReturnItem
   $script:settingsMenuUi.Quote=Add-SettingsAction '换一句台词' {if($script:collapsed){Show-Quota};Switch-Scene 'quote'} -ReturnItem
   Add-SettingsAction '刷新额度' {Request-Refresh}
   Add-SettingsAction '编辑我的语录' {Open-QuoteEditor}
@@ -124,6 +145,16 @@ function Initialize-WidgetSettingsMenu {
   $script:settingsMenuUi.Desktop.Uid='radio'
   $script:settingsMenuUi.TopmostDivider=Add-SettingsDivider -ReturnItem
   $script:settingsMenuUi.Topmost=Add-SettingsAction '始终置顶' {param($sender,$event)if($script:followHost){Update-WidgetSettingsMenu;return};$script:desktopTopmost=[bool]$sender.IsChecked;Save-Settings;Tick-Widget} -Checkable -ReturnItem
+  Add-SettingsDivider
+  $script:settingsMenuUi.Peek=Add-SettingsAction '切换应用时侧边探头' {param($sender,$event)$script:rolePeekEnabled=$sender.IsChecked;Save-Settings;Update-WidgetSettingsMenu;Tick-Widget} -Description 'Codex 中显示完整形象，其他应用旁显示 140 px 探头' -Checkable -ReturnItem
+  $script:settingsMenuUi.PeekTransition=Add-SettingsAction '形态切换动画' {param($sender,$event)$script:roleTransitionEnabled=$sender.IsChecked;Save-Settings} -Description '等待时保留原形象，再滑动淡化为探头' -Checkable -ReturnItem
+  $peekDelay=New-SettingsSlider '切换应用后的等待时间' 0 60 1
+  $script:settingsMenuUi.PeekDelay=$peekDelay.Slider;$script:settingsMenuUi.PeekDelayText=$peekDelay.Value;$peekDelay.Slider.Value=$script:rolePeekDelaySeconds
+  $peekDelay.Slider.Add_ValueChanged({param($sender,$event)if($script:settingsMenuSync){return};$script:rolePeekDelaySeconds=[Math]::Round($sender.Value);$script:settingsMenuUi.PeekDelayText.Text=$script:rolePeekDelaySeconds.ToString()+' 秒';Save-Settings;Tick-Widget})
+  Add-SettingsPanel $peekDelay.Panel
+  $script:settingsMenuUi.PeekRight=Add-SettingsAction '趴在屏幕右侧' {Set-WidgetPeekSide 'right'} -Checkable -ReturnItem
+  $script:settingsMenuUi.PeekLeft=Add-SettingsAction '趴在屏幕左侧' {Set-WidgetPeekSide 'left'} -Checkable -ReturnItem
+  $script:settingsMenuUi.PeekRight.Uid='radio';$script:settingsMenuUi.PeekLeft.Uid='radio'
   Add-SettingsDivider
   Add-SettingsAction '恢复右下角位置' {if($script:followHost){$script:offsetRight=0;$script:offsetLeft=0;$script:offsetBottom=0;$script:anchor='right'}else{$script:desktopLeft=$null;$script:desktopTop=$null};$script:side='right';$script:lastPosition=$null;Set-Facing;Hide-Quota;Save-Settings;Tick-Widget} -StayOpen
   } -ReturnItem
@@ -223,8 +254,18 @@ function Update-WidgetSettingsMenu{
   $script:settingsMenuSync=$true
   try{
     Update-WidgetUpdateMenu
+    if($script:settingsMenuUi.ChatTaskOnly){
+      $script:settingsMenuUi.ChatTaskOnly.IsChecked=$script:chatTaskOnly;$script:settingsMenuUi.ChatBlur.IsChecked=$script:chatCollapseOnBlur;$script:settingsMenuUi.ChatMotion.IsChecked=$script:chatDotsMotion;$script:settingsMenuUi.ChatAttention.IsChecked=$script:chatAttentionBubble
+      $script:settingsMenuUi.ChatBlurDelay.Value=$script:chatBlurDelaySeconds;$script:settingsMenuUi.ChatBlurDelayText.Text=$script:chatBlurDelaySeconds.ToString()+' 秒';$script:settingsMenuUi.ChatBlurDelay.IsEnabled=$script:chatCollapseOnBlur
+      $script:settingsMenuUi.ChatIdleDelay.Value=$script:chatIdleDelaySeconds;$script:settingsMenuUi.ChatIdleDelayText.Text=$script:chatIdleDelaySeconds.ToString()+' 秒';$script:settingsMenuUi.ChatIdleDelay.IsEnabled=$script:chatTaskOnly
+      $script:settingsMenuUi.ChatAutoCollapse.IsChecked=$script:chatAutoCollapse;$script:settingsMenuUi.ChatAutoCollapseDelay.Value=$script:chatAutoCollapseDelaySeconds;$script:settingsMenuUi.ChatAutoCollapseDelayText.Text=$script:chatAutoCollapseDelaySeconds.ToString()+' 秒';$script:settingsMenuUi.ChatAutoCollapseDelay.IsEnabled=$script:chatAutoCollapse
+    }
     $script:settingsMenuUi.Bubble.Header=if(!$script:collapsed -and $script:bubbleMode-eq 'quota'){'收起额度气泡'}else{'查看额度'}
     $script:settingsMenuUi.Follow.IsChecked=$script:followHost;$script:settingsMenuUi.Desktop.IsChecked=!$script:followHost
+    $script:settingsMenuUi.Peek.IsChecked=$script:rolePeekEnabled;$script:settingsMenuUi.PeekDelay.Value=$script:rolePeekDelaySeconds;$script:settingsMenuUi.PeekDelayText.Text=$script:rolePeekDelaySeconds.ToString()+' 秒';$script:settingsMenuUi.PeekDelay.IsEnabled=$script:rolePeekEnabled
+    $script:settingsMenuUi.PeekTransition.IsChecked=$script:roleTransitionEnabled;$script:settingsMenuUi.PeekTransition.IsEnabled=$script:rolePeekEnabled
+    $script:settingsMenuUi.PeekRight.IsChecked=$script:rolePeekSide-eq 'right';$script:settingsMenuUi.PeekLeft.IsChecked=$script:rolePeekSide-eq 'left'
+    $script:settingsMenuUi.PeekRight.IsEnabled=$script:rolePeekEnabled;$script:settingsMenuUi.PeekLeft.IsEnabled=$script:rolePeekEnabled
     $script:settingsMenuUi.Topmost.IsChecked=$script:desktopTopmost;$script:settingsMenuUi.Topmost.IsEnabled=!$script:followHost
     $desktopVisibility=if($script:followHost){[Windows.Visibility]::Collapsed}else{[Windows.Visibility]::Visible}
     $script:settingsMenuUi.Topmost.Visibility=$desktopVisibility;$script:settingsMenuUi.TopmostDivider.Visibility=$desktopVisibility
@@ -249,14 +290,15 @@ function Open-WidgetMenu {
 }
 
 function Set-WidgetMenuBounds {
-  $script:context.PlacementTarget=$script:ui.MenuButton
-  $script:context.Placement=if($script:side-eq 'left'){[Windows.Controls.Primitives.PlacementMode]::Right}else{[Windows.Controls.Primitives.PlacementMode]::Left}
-  $script:context.HorizontalOffset=if($script:side-eq 'left'){8}else{-8}
+  $menuAnchor=Get-WidgetMenuAnchor
+  $script:context.PlacementTarget=$menuAnchor.Target
+  $script:context.Placement=if($menuAnchor.Side-eq 'left'){[Windows.Controls.Primitives.PlacementMode]::Right}else{[Windows.Controls.Primitives.PlacementMode]::Left}
+  $script:context.HorizontalOffset=if($menuAnchor.Side-eq 'left'){8}else{-8}
   $script:context.VerticalOffset=0
-  foreach($submenu in $script:settingsSubmenus){$submenu.Tag=if($script:side-eq 'left'){[Windows.Controls.Primitives.PlacementMode]::Right}else{[Windows.Controls.Primitives.PlacementMode]::Left}}
+  foreach($submenu in $script:settingsSubmenus){$submenu.Tag=if($menuAnchor.Side-eq 'left'){[Windows.Controls.Primitives.PlacementMode]::Right}else{[Windows.Controls.Primitives.PlacementMode]::Left}}
   try{
     if(!$script:followHost -or ($script:hostHandle-ne [IntPtr]::Zero -and [GptWidgetNative]::IsWindow($script:hostHandle))){
-      $frame=Get-WidgetPlacementFrame;$dpi=Get-WidgetPlacementDpi
+      $frame=$menuAnchor.Frame;$dpi=$menuAnchor.Dpi
       $script:context.Width=[Math]::Max(180,[Math]::Min(328,($frame.Right-$frame.Left)/$dpi-16))
       $script:context.MaxHeight=[Math]::Max(160,[Math]::Min(730,($frame.Bottom-$frame.Top)/$dpi-16))
       $script:context.Resources['SettingsSubmenuWidth']=[double][Math]::Max(180,[Math]::Min(300,($frame.Right-$frame.Left)/$dpi-16))
@@ -273,12 +315,13 @@ function Position-WidgetMenuToHost {
     $script:context.UpdateLayout()
     $source=[Windows.Interop.HwndSource]::FromVisual($script:context)
     if(!$source -or $source.Handle-eq [IntPtr]::Zero){return}
-    $frame=Get-WidgetPlacementFrame;$menu=[GptWidgetNative]::Frame($source.Handle)
-    $dpi=Get-WidgetPlacementDpi
+    $menuAnchor=Get-WidgetMenuAnchor
+    $frame=$menuAnchor.Frame;$menu=[GptWidgetNative]::Frame($source.Handle)
+    $dpi=$menuAnchor.Dpi
     $margin=[int][Math]::Round(8*$dpi);$width=$menu.Right-$menu.Left;$height=$menu.Bottom-$menu.Top
-    $origin=$script:ui.MenuButton.PointToScreen([Windows.Point]::new(0,0))
-    $edge=$script:ui.MenuButton.PointToScreen([Windows.Point]::new($script:ui.MenuButton.ActualWidth,0))
-    $desiredX=if($script:side-eq 'left'){$edge.X+$margin}else{$origin.X-$width-$margin}
+    $origin=$menuAnchor.Target.PointToScreen([Windows.Point]::new(0,0))
+    $edge=$menuAnchor.Target.PointToScreen([Windows.Point]::new($menuAnchor.Target.ActualWidth,0))
+    $desiredX=if($menuAnchor.Side-eq 'left'){[Math]::Max($origin.X,$edge.X)+$margin}else{[Math]::Min($origin.X,$edge.X)-$width-$margin}
     $x=[int][Math]::Round([Math]::Max($frame.Left+$margin,[Math]::Min($frame.Right-$width-$margin,$desiredX)))
     $y=[int][Math]::Round([Math]::Max($frame.Top+$margin,[Math]::Min($frame.Bottom-$height-$margin,$origin.Y)))
     if($menu.Left-ne $x -or $menu.Top-ne $y){[GptWidgetNative]::SetWindowPos($source.Handle,[IntPtr]::Zero,$x,$y,0,0,0x15)|Out-Null}

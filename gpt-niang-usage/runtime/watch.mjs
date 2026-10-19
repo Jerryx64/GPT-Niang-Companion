@@ -6,6 +6,7 @@ import {acquireWorkerLock,processAlive,readJson} from './worker-state.mjs';
 import {readPendingRequests,completeRequests,cleanRefreshResults,widgetUpdating,updatingSnapshot} from './refresh-client.mjs';
 
 import {createPipeRefreshHandler} from './worker-ipc.mjs';
+import {createChatMonitor} from './chat-activity.mjs';
 
 const config=readJson(process.argv[2]);
 if(!config?.dataDir || !config?.codexPath)throw new Error('Invalid widget installation configuration');
@@ -19,6 +20,8 @@ if(!lock)process.exit(0);
 const statusFile=path.join(config.dataDir,'status.json');
 const healthFile=path.join(config.dataDir,'worker-status.json');
 let status=null,requestToken=readRefreshRequest(path.join(config.dataDir,'refresh.flag')),lastActivity=Date.now(),heartbeat;
+const chats=createChatMonitor(undefined,config.dataDir);
+let lastChatRefresh=0;
 const activeRequestIds=new Set();
 const initialStop=readRefreshRequest(path.join(config.dataDir,'stop.flag'));
 const save=data=>{atomicJson(statusFile,data);status=data;};
@@ -68,6 +71,10 @@ heartbeat=setInterval(()=>{
   const now=Date.now(),presence=readJson(path.join(config.dataDir,'presence.json'));
   const active=presence?.visible && now-presence.at>=0 && now-presence.at<5000 && processAlive(presence.pid);
   if(active)lastActivity=now;
+  if((parentPid || active) && now-lastChatRefresh>=3000){
+    lastChatRefresh=now;
+    try{atomicJson(path.join(config.dataDir,'chat-activity.json'),chats.snapshot(now));}catch{}
+  }
   const request=readRefreshRequest(path.join(config.dataDir,'refresh.flag'));
   const requested=request!==null && request!==requestToken;
   if(requested)requestToken=request;

@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/runtime/chat-hooks.mjs\"",
+            "timeout": 3,
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'runtime','chat-hooks.mjs')).href).then(m=>m.runChatHook()).catch(()=>process.stdout.write('{}'))\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/runtime/chat-hooks.mjs\"",
+            "timeout": 3,
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'runtime','chat-hooks.mjs')).href).then(m=>m.runChatHook()).catch(()=>process.stdout.write('{}'))\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/runtime/chat-hooks.mjs\"",
+            "timeout": 3,
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'runtime','chat-hooks.mjs')).href).then(m=>m.runChatHook()).catch(()=>process.stdout.write('{}'))\""
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/runtime/chat-hooks.mjs\"",
+            "timeout": 3,
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'runtime','chat-hooks.mjs')).href).then(m=>m.runChatHook()).catch(()=>process.stdout.write('{}'))\""
+          }
+        ]
+      }
+    ]
+  }
+}

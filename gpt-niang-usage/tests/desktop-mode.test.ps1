@@ -4,6 +4,8 @@ Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System
 $appDir=Split-Path $TestRoot -Parent
 . (Join-Path $appDir 'runtime\host-layer.ps1')
 . (Join-Path $appDir 'runtime\host-follow.ps1')
+. ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $appDir 'runtime\chat-panel.ps1'),[Text.Encoding]::UTF8)))
+. ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $appDir 'runtime\role-peek.ps1'),[Text.Encoding]::UTF8)))
 # Save preferences through the real widget code, including existing color and sound settings.
 $tokens=$null;$parseErrors=$null
 $source=[IO.File]::ReadAllText((Join-Path $appDir 'widget.ps1'),[Text.Encoding]::UTF8)

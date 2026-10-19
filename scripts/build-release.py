@@ -20,7 +20,7 @@ heading = f"## {version}\n"
 if heading not in changelog or changelog.split("## ", 1)[1].splitlines()[0] != version:
     raise SystemExit("The first changelog entry must match the release version")
 changes = changelog.split(heading, 1)[1].split("\n## ", 1)[0].strip()
-credits = (root / 'README.md').read_text(encoding='utf-8-sig').split('## 致谢与许可\n\n', 1)[1].split('\n\n交互参考', 1)[0]
+credits = (root / 'README.upstream.md').read_text(encoding='utf-8-sig').split('## 致谢与许可\n\n', 1)[1].split('\n\n交互参考', 1)[0]
 tracked = subprocess.check_output(
     ["git", "ls-files", "-z"], cwd=root
 ).decode("utf-8").split("\0")
@@ -46,6 +46,15 @@ required = {
     "gpt-niang-usage/runtime/agent-launch.vbs",
     "gpt-niang-usage/runtime/agent-supervisor.vbs",
     "gpt-niang-usage/assets/gpt-dragon-niang-bust.png",
+    "README.upstream.md", "FORK-CHANGES.md",
+    "gpt-niang-usage/assets/gpt-niang-side-peek-b2.png",
+    "gpt-niang-usage/assets/B2-NOTICE.md",
+    "gpt-niang-usage/chat-panel.xaml",
+    "gpt-niang-usage/runtime/chat-activity.mjs",
+    "gpt-niang-usage/runtime/chat-hooks.mjs",
+    "gpt-niang-usage/runtime/chat-panel.ps1",
+    "gpt-niang-usage/runtime/role-peek.ps1",
+    "gpt-niang-usage/hooks/hooks.json",
 }
 if not required.issubset(files):
     raise SystemExit("Required runtime files missing from the bundle")
@@ -79,11 +88,11 @@ with zipfile.ZipFile(archive_path) as archive:
 digest = hashlib.sha256(archive_path.read_bytes()).hexdigest().upper()
 (dist / "SHA256SUMS.txt").write_text(f"{digest}  {archive_name}\n", encoding="utf-8")
 notes = (
-    f"## {version}\n\n{changes}\n\n"
+    f"## Companion（基于 {version}）\n\n本改版由 Jerryx64 维护，原作者为 [T7moris](https://github.com/T7moris/GPT-Niang)。改进详见 [FORK-CHANGES.md](../FORK-CHANGES.md)。\n\n上游版本记录：\n\n{changes}\n\n"
     "### 下载与更新\n\n"
     f"下载 **`{archive_name}`**，完整解压后运行根目录的 `安装GPT娘.cmd`。\n\n"
     "旧版用户请先备份自定义内容，在原目录覆盖新版文件，再运行安装器；保留原有偏好。\n\n"
-    "仅支持 Windows 10 / 11，需要 Node.js 20 或更新版本及已登录的 Codex 桌面端。\n\n"
+    "仅支持 Windows 10 / 11，需要 Node.js 22.13 或更新版本及已登录的 Codex 桌面端。\n\n"
     f"SHA256：`{digest}`（同时提供 `SHA256SUMS.txt`）。\n\n"
     f"### 致谢\n\n{credits}\n"
 )

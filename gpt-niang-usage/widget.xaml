@@ -78,6 +78,8 @@
            ToolTip="点角色看额度；点气泡看语录，再点收起；拖动调整位置；右键设置"/>
     <Button x:Name="MenuButton" Canvas.Left="320" Canvas.Top="162" Width="24" Height="24" Content="☰"
             FontSize="15" Opacity="0" IsHitTestVisible="False" Background="#EDE7F6" ToolTip="挂件设置"/>
+    <Button x:Name="ChatButton" Canvas.Left="12" Canvas.Top="307" Width="148" Height="32"
+            Content="聊天 · 最近聊天" FontSize="13" Background="#FFFCFF" ToolTip="输入新聊天或查看运行情况"/>
   </Canvas>
   </Canvas>
   </Viewbox>

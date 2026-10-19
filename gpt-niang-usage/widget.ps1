@@ -17,6 +17,8 @@ $null=New-Item -ItemType Directory -Path $script:dataDir -Force
 . ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\update-ui.ps1'),[Text.Encoding]::UTF8)))
 . ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\color-theme.ps1'),[Text.Encoding]::UTF8)))
 . ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\quote-layout.ps1'),[Text.Encoding]::UTF8)))
+. ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\chat-panel.ps1'),[Text.Encoding]::UTF8)))
+. ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\role-peek.ps1'),[Text.Encoding]::UTF8)))
 Initialize-WidgetQuoteLayouts $script:appDir
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Windows.Forms,System.Drawing
 Add-Type -TypeDefinition @'
@@ -67,7 +69,7 @@ public static class GptWidgetNative {
   public static IntPtr FindCodex(){
     var f=GetAncestor(GetForegroundWindow(),2);if(IsCodex(f))return f;
     IntPtr found=IntPtr.Zero;
-    EnumWindows((h,p)=>{if(IsWindowVisible(h)&&!IsIconic(h)&&IsCodex(h)){found=h;return false;}return true;},IntPtr.Zero);
+    EnumWindows((h,p)=>{if(IsWindowVisible(h)&&IsCodex(h)){if(found==IntPtr.Zero)found=h;if(!IsIconic(h)){found=h;return false;}}return true;},IntPtr.Zero);
     return found;
   }
   public static int ProcessId(IntPtr h){uint p;GetWindowThreadProcessId(h,out p);return (int)p;}
@@ -103,6 +105,7 @@ $script:designHeight=[double]$script:window.FindName('AnimationStage').Height
 $script:ui=@{}
 foreach($name in @('Root','Bubble','Tail','TailNear','SceneText','QuotaText','QuoteText','BubbleShape','Girl','PressScale','FacingScale','TextFacingScale','Header','Refresh','MenuButton','Status','LiveDot','ShortRow','WeekRow','ShortLabel','WeekLabel','ShortUsed','ShortLeft','ShortReset','ShortBar','WeekUsed','WeekLeft','WeekReset','WeekBar')){$script:ui[$name]=$script:window.FindName($name)}
 $bitmap=New-Object Windows.Media.Imaging.BitmapImage
+$script:ui.ChatButton=$script:window.FindName('ChatButton')
 $bitmap.BeginInit();$bitmap.CacheOption=[Windows.Media.Imaging.BitmapCacheOption]::OnLoad
 $bitmap.UriSource=[Uri](Join-Path $script:appDir 'assets\gpt-dragon-niang-bust.png');$bitmap.EndInit();$bitmap.Freeze()
 $script:ui.Girl.Source=$bitmap
@@ -120,6 +123,8 @@ $script:resetTimeMode='countdown';$script:resetPhaseTimer=$null
 $script:displayRequestToken=$null
 $settingsFile=Join-Path $script:dataDir 'settings.json'
 try{$settings=Get-Content -LiteralPath $settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json
+  Read-WidgetChatSettings $settings
+  Read-WidgetRoleSettings $settings
   if($null-ne $settings.right){$script:offsetRight=[Math]::Max(0,[double]$settings.right)}
   if($null-ne $settings.bottom){$script:offsetBottom=[Math]::Max(0,[double]$settings.bottom)}
   if([double]$settings.scale-ge 0.6 -and [double]$settings.scale-le 2.5){$script:scale=[double]$settings.scale}
@@ -145,7 +150,12 @@ function Write-WidgetJson($file,$value){
   $temp=$file+'.tmp';[IO.File]::WriteAllText($temp,($value|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
   if([IO.File]::Exists($file)){[IO.File]::Replace($temp,$file,($file+'.bak'),$true)}else{[IO.File]::Move($temp,$file)}
 }
-function Save-Settings {Write-WidgetJson $settingsFile @{layoutVersion=2;right=$script:offsetRight;left=$script:offsetLeft;bottom=$script:offsetBottom;anchor=$script:anchor;side=$script:side;scale=$script:scale;collapsed=$script:collapsed;soundOn=$script:soundOn;soundVolume=$script:soundVolume;bubbleTapAdvance=$script:bubbleTapAdvance;hideMenu=$script:hideMenu;colorMode=$script:colorMode;colorChance=$script:colorChance;colorTextChance=$script:colorTextChance;colorPaused=$script:colorPaused;followHost=$script:followHost;desktopTopmost=$script:desktopTopmost;desktopLeft=$script:desktopLeft;desktopTop=$script:desktopTop}}
+function Save-Settings {
+  $saved=@{layoutVersion=2;right=$script:offsetRight;left=$script:offsetLeft;bottom=$script:offsetBottom;anchor=$script:anchor;side=$script:side;scale=$script:scale;collapsed=$script:collapsed;soundOn=$script:soundOn;soundVolume=$script:soundVolume;bubbleTapAdvance=$script:bubbleTapAdvance;hideMenu=$script:hideMenu;colorMode=$script:colorMode;colorChance=$script:colorChance;colorTextChance=$script:colorTextChance;colorPaused=$script:colorPaused;followHost=$script:followHost;desktopTopmost=$script:desktopTopmost;desktopLeft=$script:desktopLeft;desktopTop=$script:desktopTop}
+  foreach($entry in (Get-WidgetChatSettings).GetEnumerator()){$saved[$entry.Key]=$entry.Value}
+  foreach($entry in (Get-WidgetRoleSettings).GetEnumerator()){$saved[$entry.Key]=$entry.Value}
+  Write-WidgetJson $settingsFile $saved
+}
 function Get-WidgetPlacementFrame {
   if($script:followHost){return Get-WidgetVisibleFrame}
   $point=if($null-ne $script:desktopLeft -and $null-ne $script:desktopTop){[Drawing.Point]::new([int]$script:desktopLeft,[int]$script:desktopTop)}else{[Drawing.Point]::new(0,0)}
@@ -174,6 +184,7 @@ function Set-Facing {
   $script:ui.Refresh.RenderTransform=[Windows.Media.Transform]::Identity
   $script:ui.MenuButton.RenderTransformOrigin=[Windows.Point]::new(0.5,0.5)
   $script:ui.MenuButton.RenderTransform=[Windows.Media.ScaleTransform]::new($factor,1)
+  if($script:ui.ChatButton){$script:ui.ChatButton.RenderTransformOrigin=[Windows.Point]::new(0.5,0.5);$script:ui.ChatButton.RenderTransform=[Windows.Media.ScaleTransform]::new($factor,1)}
 }
 function Set-Appearance {
   $actual=$script:scale
@@ -281,7 +292,7 @@ function Read-DisplayRequest {
       if([Math]::Abs([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-[long]$request.at)-lt 10000){
         if($request.mode-eq 'quota'){Show-Quota}
         elseif($request.mode-eq 'quote'){if($script:collapsed){Show-Quota};Switch-Scene 'quote'}
-        elseif($request.mode-eq 'menu' -and $script:window.IsVisible){Open-WidgetMenu}
+        elseif($request.mode-eq 'menu' -and ($script:window.IsVisible -or ($script:peekWindow -and $script:peekWindow.IsVisible))){Open-WidgetMenu}
         elseif($request.mode-eq 'close-menu'){$script:context.IsOpen=$false}
       }
     }
@@ -297,7 +308,7 @@ function Apply-Scene {
   Update-BubbleTooltip
 }
 function Update-BubbleTooltip {
-  $copy=if($script:bubbleMode-eq 'quote'){$script:ui.QuoteText.Tag}else{
+  $copy=if($script:bubbleMode-in @('quote','activity')){$script:ui.QuoteText.Tag}else{
     $parts=@()
     if($script:status.planLabel){$parts+='当前套餐：'+$script:status.planLabel}
     foreach($row in (Get-QuotaRows)){
@@ -536,7 +547,7 @@ function Update-Quota {
   Update-BubbleTooltip
   if($script:widgetColors){Update-WidgetColorScene}
 }
-Set-Appearance;Set-BubbleState;Initialize-WidgetColors;Update-Quota
+Set-Appearance;Set-BubbleState;Initialize-WidgetColors;Update-Quota;Update-WidgetChats
 if($CheckOnly){$hostWindow=[GptWidgetNative]::FindCodex();$foregroundWindow=[GptWidgetNative]::GetAncestor([GptWidgetNative]::GetForegroundWindow(),2);@{ok=$true;imageLoaded=$bitmap.PixelWidth-gt 0;host=$hostWindow.ToInt64();hostTitle=[GptWidgetNative]::Title($hostWindow);foreground=$foregroundWindow.ToInt64();foregroundTitle=[GptWidgetNative]::Title($foregroundWindow);dataDir=$script:dataDir}|ConvertTo-Json;return}
 if($Preview){
   $script:collapsed=$false;Set-Appearance;Set-BubbleState;Apply-Scene
@@ -581,6 +592,7 @@ $script:messageHook=[Windows.Interop.HwndSourceHook]{param($hwnd,$msg,$w,$l,[ref
 $source.AddHook($script:messageHook)
 Initialize-WidgetUpdater
 Initialize-WidgetSettingsMenu
+$script:ui.ChatButton.Add_Click({Open-WidgetChatPanel})
 $script:ui.Refresh.Add_Click({param($sender,$event)Request-Refresh;Restart-SceneTtl;$script:ui.Status.Text='正在刷新额度…';$event.Handled=$true})
 $script:ui.MenuButton.Add_Click({Open-WidgetMenu})
 $script:menuTimer=New-Object Windows.Threading.DispatcherTimer
@@ -680,6 +692,10 @@ function Ensure-QuotaWorker([long]$now){
 }
 function Stop-WidgetRuntime {
   if($script:runtimeClosed){return};$script:runtimeClosed=$true
+  if($script:peekDrag){Complete-WidgetPeekDrag $false}
+  try{if($script:chatPanel){$script:chatPanel.Close()}}catch{}
+  Stop-WidgetPeekTransition
+  try{if($script:peekWindow){$script:peekWindow.Close()}}catch{}
   try{if($script:hostFollower){$script:hostFollower.Dispose()}}catch{}
   foreach($timer in @($script:timer,$script:hostEventTimer,$script:menuTimer,$script:sceneTimer,$script:resetPhaseTimer,$script:closeTimer)){try{if($timer){$timer.Stop()}}catch{}}
   try{Stop-WidgetAudio}catch{}
@@ -716,6 +732,14 @@ function Tick-Widget {
   $placementFrame=if($visible){Get-WidgetPlacementFrame}else{$null}
   $placementDpi=if($visible){Get-WidgetPlacementDpi}else{1}
   $visible=$visible -and (Test-WidgetPlacementFrame $placementFrame $placementDpi)
+  if($script:window.IsVisible){Save-WidgetFullRoleBounds}
+  $roleMode=Resolve-WidgetRoleMode $now ($script:foregroundHost-ne [IntPtr]::Zero) $script:foregroundOwn ($script:hostHandle-ne [IntPtr]::Zero) ($script:context.IsOpen -or [bool]$script:drag -or [bool]$script:peekDrag)
+  if($roleMode-notin @('full','legacy')){
+    $visible=$false
+    $script:hostFollower.Suspend()
+    if($script:chatPanel -and $script:chatPanel.Owner){$script:chatPanel.Owner=$null}
+  }
+  if($roleMode-ne 'full'){Set-WidgetPeekMode $roleMode}
   if($visible){
     if($script:attachedHost-ne $script:hostHandle){
       $script:attachedHost=$script:hostHandle;$script:lastPosition=$null
@@ -745,6 +769,7 @@ function Tick-Widget {
         [GptWidgetNative]::SetWindowPos($script:widgetHandle,[IntPtr]::Zero,$x,$y,0,0,0x15)|Out-Null
         $script:lastPosition=$position
         if($script:context.IsOpen){Set-WidgetMenuBounds;Position-WidgetMenuToHost}
+        Position-WidgetChatPanel
       }
       if($script:followHost){$nativeFrame=[GptWidgetNative]::Frame($script:hostHandle);$script:hostFollower.Configure($script:hostHandle,$nativeFrame.Left,$nativeFrame.Top,$nativeFrame.Right,$nativeFrame.Bottom,$w,$h,[int]($script:offsetLeft*$dpi),[int]($script:offsetRight*$dpi),[int]($script:offsetBottom*$dpi),$script:anchor,$true)}
     }
@@ -752,17 +777,20 @@ function Tick-Widget {
     else{Set-WidgetDesktopLayer $script:widgetHandle $script:desktopTopmost}
     if($showWidget){$script:window.Show();$script:lastPosition=$null;Request-Refresh}
   }elseif($script:window.IsVisible){
+    if($script:chatPanel -and !$script:chatCollapseOnBlur){Set-WidgetChatMode 'hidden'}
     $script:hostFollower.Suspend()
     $script:context.IsOpen=$false
     # Also return any owned quote editor to the normal band before hiding the overlay.
     [GptWidgetNative]::SetWindowPos($script:widgetHandle,[IntPtr](-2),0,0,0,0,0x13)|Out-Null
     $script:window.Hide()
   }
+  if($visible){Save-WidgetFullRoleBounds;if($roleMode-eq 'full'){Set-WidgetPeekMode 'full'}}
   if($now-$script:lastPresence-ge 1000){
-    Write-WidgetJson (Join-Path $script:dataDir 'presence.json') @{visible=[bool]$visible;at=$now;host=$script:hostHandle.ToInt64();widget=$script:widgetHandle.ToInt64();pid=$PID;followHost=$script:followHost;follow=@{ready=$script:hostFollower.Ready;events=$script:hostFollower.MovementEvents;mode='native-immediate';animationPaddingDip=14};scene=@{open=!$script:collapsed;mode=$script:bubbleMode;resetTimeMode=$script:resetTimeMode;startedAt=$script:sceneStartedAt;closesAt=$script:sceneDeadline;shortReset=$script:ui.ShortReset.Text;weekReset=$script:ui.WeekReset.Text}}
-    Update-Quota;$script:lastPresence=$now
+    Write-WidgetJson (Join-Path $script:dataDir 'presence.json') @{visible=[bool]$visible;at=$now;host=$script:hostHandle.ToInt64();widget=$script:widgetHandle.ToInt64();pid=$PID;followHost=$script:followHost;follow=@{ready=$script:hostFollower.Ready;events=$script:hostFollower.MovementEvents;mode='native-immediate';animationPaddingDip=14};scene=@{open=!$script:collapsed;mode=$script:bubbleMode;resetTimeMode=$script:resetTimeMode;startedAt=$script:sceneStartedAt;closesAt=$script:sceneDeadline;shortReset=$script:ui.ShortReset.Text;weekReset=$script:ui.WeekReset.Text};chat=@{mode=$script:chatState.mode;hasTasks=$script:chatHasTasks;primary=$script:chatPrimary;visible=[bool]($script:chatPanel -and $script:chatPanel.IsVisible);dotsAnimated=[bool]$script:chatDotsAnimated};role=@{mode=$roleMode;sizePx=140;side=$script:rolePeekSide;visible=[bool]($script:peekWindow -and $script:peekWindow.IsVisible);handle=$(if($script:peekHandle){$script:peekHandle.ToInt64()}else{0})}}
+    Update-Quota;Update-WidgetChats;$script:lastPresence=$now
     Read-DisplayRequest
   }
+  Tick-WidgetChatBehavior $now
   }finally{$script:updating=$false}
 }
 $script:winEventCallback=[GptWidgetNative+WinEventProc]{param($hook,$ev,$hwnd,$objectId,$childId,$threadId,$time)

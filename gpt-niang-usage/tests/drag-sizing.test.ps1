@@ -40,6 +40,13 @@ function Test-WidgetHostReady {return $true}
 function Set-WidgetAboveHost {}
 function Set-WidgetDesktopLayer {}
 function Request-Refresh {}
+# Keep this native-size fixture focused on legacy placement; role/chat behavior
+# has separate real WPF transition and drag coverage.
+function Save-WidgetFullRoleBounds {}
+function Resolve-WidgetRoleMode {return 'legacy'}
+function Set-WidgetPeekMode {}
+function Position-WidgetChatPanel {}
+function Tick-WidgetChatBehavior {}
 function Assert-SizeAfterNativeMove([string]$Context){
   # Reproduce the failure when the host DPI differs from the WPF window DPI:
   # WM_SIZE feeds a native resize back into Window.Width/Height in its own DIPs.

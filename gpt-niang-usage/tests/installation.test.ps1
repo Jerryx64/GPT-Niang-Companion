@@ -19,7 +19,7 @@ try{
   $common=[IO.File]::ReadAllText($commonFile)
   $isolatedAgent=Join-Path $testRoot 'update-agent'
   $common=$common.Replace("(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'GPTNiangUsage\update-agent')",("'"+$isolatedAgent.Replace("'","''")+"'"))
-  [IO.File]::WriteAllText($commonFile,$common,[Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText($commonFile,$common,[Text.UTF8Encoding]::new($true))
   $old=Join-Path $testRoot 'original'
   $data=Join-Path $testRoot 'state'
   $null=New-Item -ItemType Directory -Path $data
@@ -65,9 +65,9 @@ try{
   Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes($configFile))-eq $initialConfigBytes) 'CheckOnly preserves installation config'
   try {
     $insideAgent=Join-Path $programRoot 'update-agent'
-    [IO.File]::WriteAllText($commonFile,$common.Replace($isolatedAgent,$insideAgent),[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($commonFile,$common.Replace($isolatedAgent,$insideAgent),[Text.UTF8Encoding]::new($true))
     Assert-Throws {& (Join-Path $moved 'Install.ps1') -CheckOnly} '*must be outside the program directory*' 'stable launcher cannot be included in the replaceable program tree'
-  } finally {[IO.File]::WriteAllText($commonFile,$common,[Text.UTF8Encoding]::new($false))}
+  } finally {[IO.File]::WriteAllText($commonFile,$common,[Text.UTF8Encoding]::new($true))}
   $workerFile=Join-Path $moved 'runtime\worker-state.mjs'
   $workerBytes=[IO.File]::ReadAllBytes($workerFile)
   try{

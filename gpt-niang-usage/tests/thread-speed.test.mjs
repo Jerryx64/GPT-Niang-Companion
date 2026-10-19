@@ -31,7 +31,7 @@ test('paths outside session directories and symlink escapes are rejected', t => 
   fs.mkdirSync(path.join(root, 'sessions'));
   const file = path.join(root, 'sessions', 'a.jsonl'); fs.writeFileSync(file, '');
   const outside = path.join(root, 'private.jsonl'); fs.writeFileSync(outside, '');
-  assert.equal(allowedRollout(file, root), fs.realpathSync(file));
+  assert.equal(allowedRollout(file, root), fs.realpathSync.native(file));
   assert.equal(allowedRollout(outside, root), null);
   if (process.platform !== 'win32') {
     fs.symlinkSync(outside, path.join(root, 'sessions', 'escape.jsonl'));

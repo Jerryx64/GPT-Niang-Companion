@@ -35,12 +35,12 @@ export class RolloutCounters {
   }
 }
 export class RolloutTail {
-  constructor(file) { this.file = file; this.offset = 0; this.pending = ''; this.counters = new RolloutCounters(); this.identity = null; }
+  constructor(file, makeCounters = () => new RolloutCounters()) { this.file = file; this.offset = 0; this.pending = ''; this.makeCounters = makeCounters; this.counters = makeCounters(); this.identity = null; }
   update() {
     const stat = fs.statSync(this.file);
     if (stat.ino !== this.identity || stat.size < this.offset) {
       this.identity = stat.ino; this.offset = Math.max(0, stat.size - 4 * 1024 * 1024);
-      this.pending = ''; this.counters = new RolloutCounters();
+      this.pending = ''; this.counters = this.makeCounters();
       this.skipFirst = this.offset > 0;
     }
     const remaining = Math.min(stat.size - this.offset, 4 * 1024 * 1024);
@@ -56,7 +56,7 @@ export class RolloutTail {
     if (this.pending.length > 1024 * 1024) { this.pending = ''; this.skipFirst = true; }
     if (this.skipFirst && lines.length) { lines.shift(); this.skipFirst = false; }
     for (const line of lines) {
-      if (!line.includes('"event_msg"')) continue;
+      if (!line.includes('"event_msg"') && !line.includes('"response_item"')) continue;
       try { this.counters.accept(JSON.parse(line)); } catch {}
     }
     return this.counters;
@@ -64,9 +64,10 @@ export class RolloutTail {
 }
 export function allowedRollout(file, codexHome) {
   try {
-    const real = fs.realpathSync(file);
+    const normalize = value => /^\\\\\?\\[a-z]:\\/i.test(value) ? value.slice(4) : value;
+    const real = normalize(fs.realpathSync.native(file));
     return ['sessions', 'archived_sessions'].some(name => {
-      const directory = fs.realpathSync(path.join(codexHome, name));
+      const directory = normalize(fs.realpathSync.native(path.join(codexHome, name)));
       const relative = path.relative(directory, real);
       return relative && !relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative) && real.endsWith('.jsonl');
     }) ? real : null;
