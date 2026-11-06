@@ -12,6 +12,7 @@ $tick=$ast.Find({param($node)$node-is [Management.Automation.Language.FunctionDe
 Add-Type -TypeDefinition @'
 using System;
 public static class GptWidgetNative {
+ public static IntPtr ObservedHost;
  public struct Point {public int X,Y;}
  public struct Rect {public int Left,Top,Right,Bottom;}
  public static Rect Frame(IntPtr h){return new Rect{Left=0,Top=0,Right=8000,Bottom=6000};}
@@ -24,6 +25,7 @@ public static class GptWidgetNative {
  public static bool IsIconic(IntPtr h){return false;}
 }
 public static class GptWidgetZOrderNative {public static bool VisibleSurface(IntPtr h){return true;}}
+public static class GptWidgetMemory {public static void Check(long now){}}
 '@
 function Get-WidgetPlacementFrame {return [pscustomobject]@{Left=0;Top=0;Right=$script:frameWidth;Bottom=$script:frameHeight}}
 function Get-WidgetPlacementDpi {return $script:testDpi}

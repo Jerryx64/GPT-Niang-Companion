@@ -41,6 +41,20 @@ public static class GptWidgetNative {
   [StructLayout(LayoutKind.Sequential)] public struct Point { public int X,Y; }
   public delegate bool EnumProc(IntPtr h,IntPtr p);
   public delegate void WinEventProc(IntPtr hook,uint ev,IntPtr h,int objectId,int childId,uint threadId,uint time);
+  public static IntPtr ObservedHost;
+  public static bool RelevantLifecycleEvent(uint ev,IntPtr h,int objectId,int childId,IntPtr host){
+    if(ev==3)return true;
+    if(!((ev>=16&&ev<=23)||(ev>=0x8000&&ev<=0x8003))||objectId!=0||childId!=0)return false;
+    return host!=IntPtr.Zero?h==host:IsCodex(h);
+  }
+  public static WinEventProc FilterLifecycle(WinEventProc notify){
+    // Reject unrelated OS events before crossing into a PowerShell scriptblock.
+    // The interpreter allocates invocation state even when that block returns immediately.
+    return (hook,ev,h,objectId,childId,threadId,time)=>{
+      if(RelevantLifecycleEvent(ev,h,objectId,childId,ObservedHost))
+        notify(hook,ev,h,objectId,childId,threadId,time);
+    };
+  }
   [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint first,uint last,IntPtr module,WinEventProc callback,uint processId,uint threadId,uint flags);
   [DllImport("user32.dll")] public static extern bool UnhookWinEvent(IntPtr hook);
   public static IntPtr Hook(uint first,uint last,WinEventProc callback){return SetWinEventHook(first,last,IntPtr.Zero,callback,0,0,2);}
@@ -85,6 +99,26 @@ public static class GptWidgetNative {
   public static int ProcessId(IntPtr h){uint p;GetWindowThreadProcessId(h,out p);return (int)p;}
   public static IntPtr ForegroundHost(IntPtr h){var root=GetAncestor(h,2);return IsCodex(root)?root:IntPtr.Zero;}
   public static string Title(IntPtr h){var b=new StringBuilder(256);GetWindowText(h,b,256);return b.ToString();}
+}
+public static class GptWidgetMemory {
+  static long nextCheck;
+  public static int Collections {get;private set;}
+  public static long BeforeBytes {get;private set;}
+  public static long AfterBytes {get;private set;}
+  public static void Check(long now){
+    if(now<nextCheck)return;
+    nextCheck=now+5000;
+    using(var process=Process.GetCurrentProcess()){
+      if(process.PrivateMemorySize64<256L*1024*1024)return;
+      BeforeBytes=process.PrivateMemorySize64;
+      // .NET Framework sizes its heap against system memory, not our lower Job budget.
+      // Reclaim transient invocation/WPF objects before the 320 MiB emergency stop.
+      // Do not wait for WPF finalizers on the Dispatcher thread.
+      GC.Collect(2,GCCollectionMode.Forced,true);
+      process.Refresh();AfterBytes=process.PrivateMemorySize64;
+      Collections++;nextCheck=now+60000;
+    }
+  }
 }
 '@
 Add-Type -TypeDefinition @'
@@ -582,6 +616,7 @@ Remove-Item -LiteralPath (Join-Path $script:dataDir 'stop.flag') -ErrorAction Si
 $script:worker=$null
 $script:lastWorkerProbe=0;$script:lastWorkerStart=0;$script:runtimeClosed=$false
 $script:hostHandle=[GptWidgetNative]::FindCodex();$script:lastPresence=0;$script:lastHostProbe=0;$script:drag=$null
+[GptWidgetNative]::ObservedHost=$script:hostHandle
 $script:lastForeground=[IntPtr](-1);$script:foregroundHost=[IntPtr]::Zero;$script:foregroundOwn=$false
 $script:lastPosition=$null;$script:attachedHost=[IntPtr]::Zero;$script:updating=$false
 $interop=New-Object Windows.Interop.WindowInteropHelper($script:window)
@@ -735,6 +770,7 @@ function Tick-Widget {
   $script:updating=$true
   try{
   $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  if(!$script:drag -and !$script:peekDrag -and !($script:context -and $script:context.IsOpen)){[GptWidgetMemory]::Check($now)}
   Tick-Scene $now
   Tick-WidgetUpdater $now
   if($now-$script:lastPresence-ge 1000 -and (Test-Path -LiteralPath (Join-Path $script:dataDir 'stop.flag'))){$script:window.Close();return}
@@ -748,6 +784,7 @@ function Tick-Widget {
     elseif($script:hostHandle-eq [IntPtr]::Zero -or ![GptWidgetNative]::IsWindow($script:hostHandle)){$script:hostHandle=[IntPtr]::Zero;$script:lastHostProbe=0;$script:lastPosition=$null}
   }
   if($script:hostHandle-eq [IntPtr]::Zero -and $now-$script:lastHostProbe-gt 1000){$script:hostHandle=[GptWidgetNative]::FindCodex();$script:lastHostProbe=$now}
+  [GptWidgetNative]::ObservedHost=$script:hostHandle
   $hostVisible=$script:hostHandle-ne [IntPtr]::Zero -and [GptWidgetZOrderNative]::VisibleSurface($script:hostHandle) -and ![GptWidgetNative]::IsIconic($script:hostHandle)
   $hostReady=Test-WidgetHostReady $script:hostReadiness $script:hostHandle $now
   if(!$script:followHost -and !$script:hostReadiness.desktopStarted -and ($script:hostHandle-eq [IntPtr]::Zero -or ($hostVisible -and $hostReady))){$script:hostReadiness.desktopStarted=$true}
@@ -816,7 +853,7 @@ function Tick-Widget {
   Tick-WidgetChatBehavior $now
   }finally{$script:updating=$false}
 }
-$script:winEventCallback=[GptWidgetNative+WinEventProc]{param($hook,$ev,$hwnd,$objectId,$childId,$threadId,$time)
+$script:winEventCallback=[GptWidgetNative]::FilterLifecycle([GptWidgetNative+WinEventProc]{param($hook,$ev,$hwnd,$objectId,$childId,$threadId,$time)
   if($hwnd-eq $script:hostHandle -and $objectId-eq 0 -and $childId-eq 0){
     if($ev-eq 16){$script:context.IsOpen=$false}
   }
@@ -825,7 +862,7 @@ $script:winEventCallback=[GptWidgetNative+WinEventProc]{param($hook,$ev,$hwnd,$o
     # need the slower PowerShell update.
     if(!$script:hostEventTimer.IsEnabled){$script:hostEventTimer.Start()}
   }
-}
+})
 $script:hostEventTimer=New-Object Windows.Threading.DispatcherTimer
 $script:hostEventTimer.Interval=[TimeSpan]::FromMilliseconds(33)
 $script:hostEventTimer.Add_Tick({$script:hostEventTimer.Stop();try{Tick-Widget}catch{[IO.File]::WriteAllText((Join-Path $script:dataDir 'display-error.txt'),$_.Exception.Message,[Text.UTF8Encoding]::new($false))}})

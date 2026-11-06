@@ -2,6 +2,12 @@
 
 本改版由 [Jerryx64](https://github.com/Jerryx64) 维护，基于 **[T7moris/GPT-Niang](https://github.com/T7moris/GPT-Niang) v1.3.4**，基线提交为 [`b92159a`](https://github.com/T7moris/GPT-Niang/commit/b92159a93c131bd5ba4722d7f507ee04d633d5db)。原作者为 **T7moris**，原项目贡献者的历史、版权、许可和致谢均保留。
 
+## 1.4.1 长时间运行内存修复
+
+- 在原生代码中过滤无关系统窗口事件，避免每条事件都创建 PowerShell 回调执行状态。
+- 主进程达到 256 MiB 时在空闲周期主动回收临时托管对象，检查间隔 5 秒、回收冷却 60 秒；不在 WPF 界面线程等待终结器。
+- 原有 320 / 384 / 448 MiB 保护和有限重启预算不变。补充事件压力与回收测试；修复不等于对所有操作时长和场景作绝不增长的承诺。
+
 ## 1.4.0 内存与稳定性修复
 
 - Windows 常驻守护改为轻量 .NET 程序；使用系统自带编译器首次本地构建，后续复用，不再保留 PowerShell 守护进程。

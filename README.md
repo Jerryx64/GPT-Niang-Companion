@@ -8,6 +8,10 @@
 
 <img src="gpt-niang-usage/assets/gpt-dragon-niang-bust.png" alt="上游原完整形象" width="180"> <img src="gpt-niang-usage/assets/gpt-niang-side-peek-b2.png" alt="改版新增 B2 侧边探头" width="140">
 
+## 1.4.1：长时间运行内存修复
+
+先在原生层过滤无关系统窗口事件，减少 PowerShell 回调产生的临时对象；主进程达到 256 MiB 后在空闲周期提前回收，避免迟于 320 MiB 保护阈值。保留原有硬内存上限、单实例和有限重启预算。若旧版因资源保护退出，更新后运行“打开GPT娘.cmd”恢复。详细说明见 [更新记录](更新记录.md)。
+
 ## 1.4.0：降低内存与修复更新
 
 轻量 .NET 守护取代常驻 PowerShell 守护；图片按显示尺寸解码、聊天列表按需创建。受管进程组提交内存硬上限 448 MiB，单进程 384 MiB；挂件超过 320 MiB 停止并等待手动恢复。Codex 独立启动的 MCP 连接不在此预算内。异常启动有次数限制，避免无限重试。右键菜单在点击位置旁边弹出，点击其他应用或网页空白处即关闭。
