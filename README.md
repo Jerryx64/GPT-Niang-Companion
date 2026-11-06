@@ -8,6 +8,12 @@
 
 <img src="gpt-niang-usage/assets/gpt-dragon-niang-bust.png" alt="上游原完整形象" width="180"> <img src="gpt-niang-usage/assets/gpt-niang-side-peek-b2.png" alt="改版新增 B2 侧边探头" width="140">
 
+## 1.4.0：降低内存与修复更新
+
+轻量 .NET 守护取代常驻 PowerShell 守护；图片按显示尺寸解码、聊天列表按需创建。受管进程组提交内存硬上限 448 MiB，单进程 384 MiB；挂件超过 320 MiB 停止并等待手动恢复。Codex 独立启动的 MCP 连接不在此预算内。异常启动有次数限制，避免无限重试。右键菜单点击外部即关闭。
+
+详细变更见[更新记录](更新记录.md)。
+
 ## 我们做了哪些改进
 
 - **聊天与任务状态**：旁边写草稿、打开 Codex 继续；列表可回到原聊天。运行、待授权、待回答、完成、中断和异常分别提示，称呼使用“老大”。
@@ -33,7 +39,7 @@ cd GPT-Niang-Companion
 
 若已安装原版，请先按[上游移动与停用说明](README.upstream.md#更新移动与卸载)备份、停用旧安装，再迁移到新目录；安装器会检查旧路径归属，避免两份挂件同时争用个人数据。这个仓库沿用上游插件标识和个人数据位置。
 
-**更新方式：**本改版优先使用 Git 更新。Git 源码目录不会被上游整包自动替换。如果使用 Download ZIP，请在设置中关闭自动更新；现有内置更新源仍指向 T7moris 的原版 Release，安装原版整包会覆盖本改版。上游原版下载链接见 [README.upstream.md](README.upstream.md)，该下载不包含这里新增的功能。
+**更新方式：**下载[本仓库最新 Windows Release](https://github.com/Jerryx64/GPT-Niang-Companion/releases/latest)，完整解压并运行 `安装GPT娘.cmd`。v1.4.0 起内置更新只跟随本改版，API 限流时自动使用 Release 更新清单。旧版首次升级需手动覆盖程序文件并重新安装，个人设置保留。Git 克隆安装仍使用 `git pull`，不会被整包更新覆盖。
 
 ## 使用与设置
 
@@ -43,7 +49,7 @@ cd GPT-Niang-Companion
 | 点击状态、小点或侧边探头 | 打开聊天输入和本机聊天列表 |
 | 输入 Enter / Shift+Enter | 打开 Codex 继续 / 换行；不会在挂件中自动发送 |
 | 拖动趴姿或等待态 | 自由移动并保存位置，拖动不会误触发聊天 |
-| 右键角色 | 打开设置 |
+| 右键角色 | 打开设置；点击外部关闭整组菜单 |
 | 聊天显示与收起 | 开关无操作/焦点收起、轮动、提醒并分别设置延时 |
 | 显示与位置 | 侧边模式、左右侧、形态动画和切应用后的等待时间 |
 

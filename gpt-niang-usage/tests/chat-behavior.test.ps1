@@ -84,6 +84,8 @@ $script:ui=@{ChatButton=[Windows.Controls.Button]::new()}
 $script:widgetHandle=[IntPtr]1;$script:peekHandle=[IntPtr]2
 $script:peekWindow=[Windows.Window]::new();$script:peekWindow.Width=140;$script:peekWindow.Height=140;$script:peekWindow.Left=-20000;$script:peekWindow.Top=-20000;$script:peekWindow.ShowActivated=$false;$script:peekWindow.ShowInTaskbar=$false
 Initialize-WidgetChatPanel;$script:chatPanel.Left=-20000;$script:chatPanel.Top=-20000
+# This fixture covers layout/state; snapshot and lazy list integration is tested separately.
+function Update-WidgetChats {}
 $area=[Windows.Forms.Screen]::PrimaryScreen.WorkingArea
 $full=[GptWidgetNative+Rect]::new();$full.Left=$area.Left+500;$full.Top=$area.Top+200;$full.Right=$full.Left+200;$full.Bottom=$full.Top+200;[GptWidgetNative]::WidgetFrame=$full
 $side=[GptWidgetNative+Rect]::new();$side.Right=$area.Right;$side.Left=$side.Right-140;$side.Top=$area.Top+200;$side.Bottom=$side.Top+140;[GptWidgetNative]::PeekFrame=$side

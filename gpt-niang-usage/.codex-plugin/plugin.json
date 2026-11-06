@@ -1,6 +1,6 @@
 {
   "name": "gpt-niang-usage",
-  "version": "1.3.4",
+  "version": "1.4.0",
   "description": "基于 T7moris/GPT-Niang 的改版：额度、聊天状态、轮动小点与可拖动的侧边陪伴。",
   "mcpServers": "./.mcp.json",
   "hooks": "./hooks/hooks.json",
@@ -25,5 +25,6 @@
     "codex",
     "quota",
     "widget"
-  ]
+  ],
+  "skills": "./skills/"
 }

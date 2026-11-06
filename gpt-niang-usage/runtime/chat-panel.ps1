@@ -132,6 +132,7 @@ function Update-WidgetChats {
   foreach($name in @('ChatDot1','ChatDot2','ChatDot3')){$script:chatUi[$name].Fill=[Windows.Media.BrushConverter]::new().ConvertFromString($dotColor)}
   $script:chatUi.ChatSummary.Text=if(!$fresh){'状态待确认'}elseif($waiting){"$approval 待授权 · $question 待回答"}else{"$running 运行中"}
   $script:chatUi.ChatFooter.Text=if($fresh){'每 3 秒更新 · '+[DateTimeOffset]::FromUnixTimeMilliseconds([long]$script:chatSnapshot.at).ToLocalTime().ToString('HH:mm:ss')+' 更新'}elseif($script:chatSnapshot.error){$script:chatSnapshot.error}else{'等待更新；可直接打开聊天确认进度'}
+  if($script:chatState.mode-ne 'expanded'){return}
   $signature=([string]$fresh)+(($threads|ForEach-Object{$_.id+'|'+$_.title+'|'+$_.state+'|'+$_.waitingKind+'|'+[Math]::Floor([double]$_.lastAt/60000)})-join ';')
   if($signature-eq $script:chatSignature){return};$script:chatSignature=$signature
   $scroll=$script:chatUi.ChatScroll.VerticalOffset;$script:chatUi.ChatList.Children.Clear()
@@ -223,6 +224,9 @@ function Set-WidgetChatDotAnimation {
 }
 function Set-WidgetChatMode([string]$Mode) {
   $script:chatState.mode=$Mode
+  if($Mode-ne 'expanded' -and $script:chatRenderedMode-eq 'expanded' -and $script:chatPanel){
+    $script:chatUi.ChatList.Children.Clear();$script:chatSignature=$null
+  }
   Update-WidgetChatButtonVisibility
   if($Mode-eq 'hidden'){
     if($script:chatPanel){$script:chatPanel.Hide();Set-WidgetChatDotAnimation};$script:chatRenderedMode='hidden';return
@@ -230,6 +234,7 @@ function Set-WidgetChatMode([string]$Mode) {
   if(!$script:chatPanel){Initialize-WidgetChatPanel;Update-WidgetChats}
   if($script:chatRenderedMode-ne $Mode -or !$script:chatPanel.IsVisible){
     $expanded=$Mode-eq 'expanded'
+    if($expanded){Update-WidgetChats}
     $script:chatUi.ChatExpanded.Visibility=if($expanded){'Visible'}else{'Collapsed'}
     $script:chatUi.ChatStatus.Visibility=if($Mode-eq 'status'){'Visible'}else{'Collapsed'}
     $script:chatUi.ChatCompact.Visibility=if($Mode-eq 'compact'){'Visible'}else{'Collapsed'}

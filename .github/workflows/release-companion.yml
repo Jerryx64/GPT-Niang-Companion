@@ -1,0 +1,49 @@
+name: Publish Windows Companion release
+on:
+  push:
+    branches: [companion]
+    paths:
+      - gpt-niang-usage/package.json
+      - .github/workflows/release-companion.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: companion-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Shared runtime tests
+        working-directory: gpt-niang-usage
+        run: npm test
+      - name: Prepare isolated installer fixture
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'gpt-niang-test-bin'
+          New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+          Copy-Item (Get-Command node.exe).Source (Join-Path $fixture 'codex.exe')
+          $fixture | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Windows native supervisor, installer and WPF tests
+        working-directory: gpt-niang-usage
+        run: npm run test:windows
+      - name: Build and verify archive and update feed
+        run: python scripts/build-release.py
+      - name: Publish verified Windows package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content gpt-niang-usage/package.json -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+          $archive = "dist/gpt-niang-usage-widget-$tag-windows.zip"
+          gh release create $tag $archive dist/SHA256SUMS.txt dist/update.json --target $env:GITHUB_SHA --title "GPT-Niang Companion $tag" --notes-file dist/release-notes.md --draft
+          if ($LASTEXITCODE -ne 0) { throw 'Could not create release; existing releases are never overwritten.' }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish release.' }

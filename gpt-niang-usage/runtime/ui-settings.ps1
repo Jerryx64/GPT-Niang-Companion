@@ -103,6 +103,18 @@ function Initialize-WidgetSettingsMenu {
 '@)
   $script:settingsMenuSync=$false;$script:settingsMenuUi=@{};$script:settingsSubmenus=@()
   $script:context=New-Object Windows.Controls.ContextMenu
+  $script:context.StaysOpen=$false
+  # The pet uses non-activating windows. Explicit capture makes outside clicks
+  # dismiss the whole menu even when a different application keeps keyboard focus.
+  $script:context.AddHandler([Windows.Input.Mouse]::PreviewMouseDownOutsideCapturedElementEvent,[Windows.Input.MouseButtonEventHandler]{
+    param($sender,$event)
+    Close-WidgetSettingsMenu
+  })
+  $script:context.Add_Opened({
+    $null=$script:context.Dispatcher.BeginInvoke([Action]{
+      if($script:context.IsOpen){[Windows.Input.Mouse]::Capture($script:context,[Windows.Input.CaptureMode]::SubTree)|Out-Null}
+    },[Windows.Threading.DispatcherPriority]::Input)
+  })
   $script:context.FontFamily=[Windows.Media.FontFamily]::new('Microsoft YaHei UI');$script:context.FontSize=14.5;$script:context.Width=328
   $script:context.MaxHeight=[Math]::Max(360,[Math]::Min(730,[Windows.SystemParameters]::WorkArea.Height-28))
   $script:context.Resources.MergedDictionaries.Add($script:settingsMenuResources)
@@ -280,6 +292,11 @@ function Update-WidgetSettingsMenu{
     $script:settingsMenuUi.Volume.Value=$script:soundVolume;$script:settingsMenuUi.Volume.IsEnabled=$script:soundOn;$script:settingsMenuUi.VolumeText.Text=([Math]::Round($script:soundVolume*100)).ToString()+'%'
     $script:sizeSlider.Value=$script:scale;$script:settingsMenuUi.SizeText.Text=([Math]::Round($script:scale*100)).ToString()+'%';Update-WidgetSizePresets
   }finally{$script:settingsMenuSync=$false}
+}
+
+function Close-WidgetSettingsMenu {
+  foreach($submenu in $script:settingsSubmenus){$submenu.IsSubmenuOpen=$false}
+  $script:context.IsOpen=$false
 }
 
 function Open-WidgetMenu {

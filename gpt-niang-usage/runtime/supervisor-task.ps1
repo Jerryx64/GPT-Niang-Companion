@@ -126,7 +126,7 @@ public static class GptWidgetSupervisorPauseNative {
 function Resume-WidgetSupervisor {
   param([Parameter(Mandatory=$true)][string]$AppDir)
   $info=Get-WidgetSupervisorInfo $AppDir
-  foreach($name in @('supervisor-pause.json','supervisor-disabled.flag','supervisor-stop.flag')){
+  foreach($name in @('supervisor-pause.json','supervisor-disabled.flag','supervisor-stop.flag','resource-block.flag','supervisor-launches.json')){
     $file=Join-Path $info.DataDir $name
     if(Test-Path -LiteralPath $file){Remove-Item -LiteralPath $file -ErrorAction Stop}
   }
@@ -190,8 +190,9 @@ function Stop-WidgetSupervisorTask {
   # Logon recovery runs inside the scheduled entry before its supervisor loop.
   # It must not terminate its own task while re-registering the recovered plugin.
   $recoveringEntry=$self -and [string]$self.CommandLine -and $self.CommandLine.IndexOf($stableScript,[StringComparison]::OrdinalIgnoreCase)-ge 0 -and $self.CommandLine-match '\s-Supervisor(?:\s|$)'
-  $processes=@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction Stop|Where-Object{
-    $_.ProcessId-ne $PID -and [string]$_.CommandLine -and ($_.CommandLine.IndexOf($expectedScript,[StringComparison]::OrdinalIgnoreCase)-ge 0 -or ($info.WorkingDirectory-ine $info.AppDir -and $_.CommandLine.IndexOf($stableScript,[StringComparison]::OrdinalIgnoreCase)-ge 0))
+  $nativePath=Join-Path $info.DataDir 'native\GPTNiangSupervisor.exe'
+  $processes=@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe' OR Name='GPTNiangSupervisor.exe'" -ErrorAction Stop|Where-Object{
+    $_.ProcessId-ne $PID -and [string]$_.CommandLine -and (($_.Name-ieq 'GPTNiangSupervisor.exe' -and $_.ExecutablePath-ieq $nativePath -and $_.CommandLine.IndexOf(('"'+$info.AppDir+'"'),[StringComparison]::OrdinalIgnoreCase)-ge 0) -or $_.CommandLine.IndexOf($expectedScript,[StringComparison]::OrdinalIgnoreCase)-ge 0 -or ($info.WorkingDirectory-ine $info.AppDir -and $_.CommandLine.IndexOf($stableScript,[StringComparison]::OrdinalIgnoreCase)-ge 0))
   })
   $null=New-Item -ItemType Directory -Path $info.DataDir -Force
   [IO.File]::WriteAllText((Join-Path $info.DataDir 'supervisor-stop.flag'),'stop')

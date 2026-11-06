@@ -134,6 +134,17 @@ function Wait-WidgetUpdateIdle($Journal) {
     Start-Sleep -Milliseconds 500
   }
 }
+function Test-WidgetSupervisorHealthIdentity($Process,$Journal,$Status) {
+  if(!$Process -or ![string]$Process.CommandLine){return $false}
+  if($Process.Name-ieq 'GPTNiangSupervisor.exe'){
+    $expected=Join-Path $Journal.dataDir 'native\GPTNiangSupervisor.exe'
+    if($Process.ExecutablePath-ine $expected -or !$Status.processStartedAt -or !$Process.CreationDate){return $false}
+    $sameStart=[Math]::Abs((([DateTime]$Process.CreationDate).ToUniversalTime()-([DateTime]$Status.processStartedAt).ToUniversalTime()).TotalMilliseconds)-lt 1
+    return $sameStart -and $Process.CommandLine.IndexOf(('"'+$Journal.appDir+'"'),[StringComparison]::OrdinalIgnoreCase)-ge 0 -and $Process.CommandLine.IndexOf(('"'+$Journal.dataDir+'"'),[StringComparison]::OrdinalIgnoreCase)-ge 0
+  }
+  $expected='"'+(Join-Path (Get-WidgetUpdateAgentDir) 'update-agent.ps1')+'"'
+  return $Process.Name-in @('powershell.exe','pwsh.exe') -and $Process.CommandLine.IndexOf($expected,[StringComparison]::OrdinalIgnoreCase)-ge 0
+}
 function Wait-WidgetUpdatedHealth($Journal) {
   $config=Read-WidgetUpdateJson (Join-Path $Journal.appDir 'installation.json')
   Assert-WidgetPluginRegistration $config.codexPath $Journal.version
@@ -142,8 +153,7 @@ function Wait-WidgetUpdatedHealth($Journal) {
     $status=Read-WidgetUpdateJson (Join-Path $Journal.dataDir 'supervisor-status.json')
     if($status -and ([DateTime]::UtcNow-([DateTime]$status.at).ToUniversalTime()).TotalSeconds-lt 10 -and ([DateTime]$status.at).ToUniversalTime()-ge ([DateTime]$Journal.installStartedAt).ToUniversalTime()) {
       $process=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$status.pid) -ErrorAction Stop
-      $expected='"'+(Join-Path (Get-WidgetUpdateAgentDir) 'update-agent.ps1')+'"'
-      if($process -and $process.Name-in @('powershell.exe','pwsh.exe') -and $process.CommandLine.IndexOf($expected,[StringComparison]::OrdinalIgnoreCase)-ge 0){return}
+      if(Test-WidgetSupervisorHealthIdentity $process $Journal $status){return}
     }
     Start-Sleep -Milliseconds 500
   }while([DateTime]::UtcNow-lt $deadline)

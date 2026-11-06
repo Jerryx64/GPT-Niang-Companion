@@ -98,6 +98,18 @@ try{
   $script:settingsMenuUi.Sound.IsChecked=$false
   $script:settingsMenuUi.Sound.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.MenuItem]::ClickEvent))
   Assert-Equal $script:settingsMenuUi.Volume.IsEnabled $false 'Muted sound disables volume control'
+  # Exercise WPF's actual outside-capture routed event, including a child menu.
+  $script:context.PlacementTarget=$script:window
+  $script:context.IsOpen=$true
+  $script:settingsSubmenus[0].IsSubmenuOpen=$true
+  $outside=[Windows.Input.MouseButtonEventArgs]::new([Windows.Input.Mouse]::PrimaryDevice,0,[Windows.Input.MouseButton]::Left)
+  $outside.RoutedEvent=[Windows.Input.Mouse]::PreviewMouseDownOutsideCapturedElementEvent
+  $script:context.RaiseEvent($outside)
+  Assert-Equal $script:context.IsOpen $false 'Outside click closes root menu'
+  Assert-Equal $script:settingsSubmenus[0].IsSubmenuOpen $false 'Outside click closes submenu'
+  $script:context.IsOpen=$true
+  Assert-Equal $script:context.IsOpen $true 'Menu can be reopened after dismissal'
+  Close-WidgetSettingsMenu
   Write-Output 'PASS: menu modes, side pose settings, conditional topmost, shared row styling, presets and sound controls'
 }finally{
   $script:window.Close()

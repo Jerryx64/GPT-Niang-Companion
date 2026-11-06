@@ -48,7 +48,7 @@ function Initialize-WidgetPeekWindow {
   $script:peekImage=$script:peekWindow.FindName('PeekGirl')
   $script:peekOriginalImage=$script:peekWindow.FindName('OriginalGirl');$script:peekStage=$script:peekWindow.FindName('PeekStage')
   if($script:ui.Girl){$script:peekOriginalImage.Source=$script:ui.Girl.Source}
-  $image=[Windows.Media.Imaging.BitmapImage]::new();$image.BeginInit();$image.CacheOption='OnLoad';$image.UriSource=[Uri](Join-Path $script:appDir 'assets\gpt-niang-side-peek-b2.png');$image.EndInit();$image.Freeze()
+  $image=[Windows.Media.Imaging.BitmapImage]::new();$image.BeginInit();$image.CacheOption='OnLoad';$image.DecodePixelWidth=280;$image.UriSource=[Uri](Join-Path $script:appDir 'assets\gpt-niang-side-peek-b2.png');$image.EndInit();$image.Freeze()
   $script:peekImage.Source=$image
   $converted=[Windows.Media.Imaging.FormatConvertedBitmap]::new($image,[Windows.Media.PixelFormats]::Bgra32,$null,0)
   $script:peekStride=$image.PixelWidth*4;$script:peekPixels=New-Object byte[] ($script:peekStride*$image.PixelHeight);$converted.CopyPixels($script:peekPixels,$script:peekStride,0)
@@ -184,10 +184,14 @@ function Complete-WidgetPeekDrag([bool]$OpenChat=$true) {
 }
 function Set-WidgetRoleFrame($Frame) {
   $dpi=[GptWidgetNative]::GetDpiForWindow($script:peekHandle)/96.0;if($dpi-le 0){$dpi=1}
-  $script:peekWindow.Width=$Frame.Width/$dpi;$script:peekWindow.Height=$Frame.Height/$dpi
+  $current=Get-WidgetPeekFrame
+  $same=$current.X-eq [int]$Frame.X -and $current.Y-eq [int]$Frame.Y -and $current.Width-eq [int]$Frame.Width -and $current.Height-eq [int]$Frame.Height
   Set-WidgetDesktopLayer $script:peekHandle $true
-  [GptWidgetNative]::SetWindowPos($script:peekHandle,[IntPtr]::Zero,[int]$Frame.X,[int]$Frame.Y,[int]$Frame.Width,[int]$Frame.Height,0x14)|Out-Null
-  $script:peekWindow.UpdateLayout()
+  if(!$same -or [Math]::Abs($script:peekWindow.Width-$Frame.Width/$dpi)-gt 0.01 -or [Math]::Abs($script:peekWindow.Height-$Frame.Height/$dpi)-gt 0.01){
+    $script:peekWindow.Width=$Frame.Width/$dpi;$script:peekWindow.Height=$Frame.Height/$dpi
+    [GptWidgetNative]::SetWindowPos($script:peekHandle,[IntPtr]::Zero,[int]$Frame.X,[int]$Frame.Y,[int]$Frame.Width,[int]$Frame.Height,0x14)|Out-Null
+    $script:peekWindow.UpdateLayout()
+  }
   if(!$script:peekWindow.IsVisible){$script:peekWindow.Show()}
 }
 function Stop-WidgetPeekTransition {
@@ -214,7 +218,10 @@ function Set-WidgetPeekMode([string]$Mode) {
   if(!$script:peekWindow){Initialize-WidgetPeekWindow}
   if($script:peekDrag){return}
   $target=Get-WidgetPeekTarget
-  $script:peekImage.RenderTransform=[Windows.Media.ScaleTransform]::new($(if($script:rolePeekSide-eq 'left'){-1}else{1}),1)
+  $facing=if($script:rolePeekSide-eq 'left'){-1}else{1}
+  if($script:peekImage.RenderTransform-isnot [Windows.Media.ScaleTransform] -or $script:peekImage.RenderTransform.ScaleX-ne $facing){
+    $script:peekImage.RenderTransform=[Windows.Media.ScaleTransform]::new($facing,1)
+  }
   if($Mode-eq 'waiting'){
     if($script:peekRenderedMode-ne 'waiting'){
       Stop-WidgetPeekTransition

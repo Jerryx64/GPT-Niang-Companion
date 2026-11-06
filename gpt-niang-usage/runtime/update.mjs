@@ -8,8 +8,9 @@ import {fileURLToPath} from 'node:url';
 import {atomicJson} from './usage.mjs';
 
 export const DAY = 86400000;
-export const RELEASE_API = 'https://api.github.com/repos/T7moris/GPT-Niang/releases/latest';
-const RELEASE_PATH = '/T7moris/GPT-Niang/releases/download/';
+export const RELEASE_API = 'https://api.github.com/repos/Jerryx64/GPT-Niang-Companion/releases/latest';
+export const RELEASE_FEED = 'https://github.com/Jerryx64/GPT-Niang-Companion/releases/latest/download/update.json';
+const RELEASE_PATH = '/Jerryx64/GPT-Niang-Companion/releases/download/';
 const MAX_ZIP = 50 * 1024 * 1024, MAX_EXPANDED = 100 * 1024 * 1024;
 const read = file => {try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch{return null;}};
 const readTransaction = file => {
@@ -47,7 +48,7 @@ export function allowedUrl(value,{api=false}={}) {
   const url=new URL(value);
   if(url.protocol!=='https:' || url.username || url.password || url.port || url.hash)throw new Error('Untrusted update URL');
   const host=url.hostname.toLowerCase();
-  const allowed=api ? value===RELEASE_API :
+  const allowed=api ? value===RELEASE_API : value===RELEASE_FEED ||
     (host==='github.com' && url.pathname.startsWith(RELEASE_PATH)) ||
     ['release-assets.githubusercontent.com','github-releases.githubusercontent.com'].includes(host);
   if(!allowed)throw new Error('Untrusted update host');
@@ -71,6 +72,7 @@ export async function download(url,{limit=MAX_ZIP,api=false,request=https.get,on
       if(status!==200) {
         response.resume();
         const error=new Error('GitHub update request failed ('+status+')');
+        error.statusCode=status;
         if(status===429 || (status===403 && response.headers['x-ratelimit-remaining']==='0')) {
           const retry=response.headers['retry-after'];
           const seconds=/^\d+$/.test(retry??'')?Number(retry)*1000:Date.parse(retry)-Date.now();
@@ -95,6 +97,16 @@ export async function download(url,{limit=MAX_ZIP,api=false,request=https.get,on
     req.setTimeout(30000,()=>req.destroy(new Error('Update download timed out')));
   });
 }
+export async function latestRelease(fetchBytes=download) {
+  try{return JSON.parse((await fetchBytes(RELEASE_API,{api:true,limit:1024*1024})).toString('utf8'));}
+  catch(error){
+    if(![403,429].includes(error.statusCode))throw error;
+    // The public Release asset does not consume GitHub REST API quota. Its asset
+    // paths and archive checksums still pass the normal repository-bound checks.
+    return JSON.parse((await fetchBytes(RELEASE_FEED,{limit:1024*1024})).toString('utf8'));
+  }
+}
+
 export function selectRelease(release,currentVersion) {
   if(release.draft || release.prerelease || !versionParts(release.tag_name))return null;
   if(compareVersions(release.tag_name,currentVersion)<=0)return null;
@@ -298,7 +310,7 @@ async function performUpdate(config,{mode='manual',agentDir=path.join(process.en
     }
     if(mode==='cleanup')return;
     report({phase:'checking',message:'正在检查正式版…',nextCheckAt:Date.now()+DAY,retryAfterAt:0});
-    const release=JSON.parse((await fetchBytes(RELEASE_API,{api:true,limit:1024*1024})).toString('utf8'));
+    const release=await latestRelease(fetchBytes);
     const selected=selectRelease(release,config.version);
     if(!selected){report({phase:'current',message:'已是最新正式版。'});return;}
     report({phase:'downloading',version:selected.version,message:'正在下载更新…',bytes:0});

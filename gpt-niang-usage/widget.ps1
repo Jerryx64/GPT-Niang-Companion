@@ -6,6 +6,16 @@ if(!(Test-Path -LiteralPath $script:configPath)){throw 'Please run Install.ps1 f
 $script:config=Get-Content -LiteralPath $script:configPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $script:dataDir=$script:config.dataDir
 $null=New-Item -ItemType Directory -Path $script:dataDir -Force
+# Claim the current user's instance before loading WPF, images or workers.
+$script:mutex=$null;$script:mutexOwned=$false
+if(!$CheckOnly -and !$Preview){
+  . (Join-Path $script:appDir 'runtime\resource-guard.ps1')
+  $script:mutex=Open-WidgetInstanceMutex
+  if(!$script:mutex){return}
+  $script:mutexOwned=$true
+}
+try{
+if($script:mutexOwned){Enter-WidgetResourceBudget}
 . (Join-Path $script:appDir 'runtime\quotes.ps1')
 . ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $script:appDir 'runtime\ui-settings.ps1'),[Text.Encoding]::UTF8)))
 . (Join-Path $script:appDir 'runtime\audio.ps1')
@@ -104,14 +114,22 @@ $script:designWidth=[double]$script:window.FindName('AnimationStage').Width
 $script:designHeight=[double]$script:window.FindName('AnimationStage').Height
 $script:ui=@{}
 foreach($name in @('Root','Bubble','Tail','TailNear','SceneText','QuotaText','QuoteText','BubbleShape','Girl','PressScale','FacingScale','TextFacingScale','Header','Refresh','MenuButton','Status','LiveDot','ShortRow','WeekRow','ShortLabel','WeekLabel','ShortUsed','ShortLeft','ShortReset','ShortBar','WeekUsed','WeekLeft','WeekReset','WeekBar')){$script:ui[$name]=$script:window.FindName($name)}
-$bitmap=New-Object Windows.Media.Imaging.BitmapImage
 $script:ui.ChatButton=$script:window.FindName('ChatButton')
-$bitmap.BeginInit();$bitmap.CacheOption=[Windows.Media.Imaging.BitmapCacheOption]::OnLoad
-$bitmap.UriSource=[Uri](Join-Path $script:appDir 'assets\gpt-dragon-niang-bust.png');$bitmap.EndInit();$bitmap.Freeze()
-$script:ui.Girl.Source=$bitmap
-$script:alphaBitmap=New-Object Windows.Media.Imaging.FormatConvertedBitmap($bitmap,[Windows.Media.PixelFormats]::Bgra32,$null,0)
-$script:alphaStride=$bitmap.PixelWidth*4;$script:alphaPixels=New-Object byte[] ($script:alphaStride*$bitmap.PixelHeight)
-$script:alphaBitmap.CopyPixels($script:alphaPixels,$script:alphaStride,0)
+# Decode for the current physical display size; keep the original asset for larger scales.
+function Update-WidgetCharacterBitmap([double]$Dpi) {
+  $required=$script:ui.Girl.Width*$script:displayScale*[Math]::Max(1,$Dpi)*1.5
+  $decodeWidth=[int][Math]::Min(1254,[Math]::Max(256,[Math]::Ceiling($required/128)*128))
+  if($script:bitmap -and $script:bitmap.PixelWidth-eq $decodeWidth){return}
+  $image=[Windows.Media.Imaging.BitmapImage]::new()
+  $image.BeginInit();$image.CacheOption='OnLoad';$image.DecodePixelWidth=$decodeWidth
+  $image.UriSource=[Uri](Join-Path $script:appDir 'assets\gpt-dragon-niang-bust.png');$image.EndInit();$image.Freeze()
+  $converted=[Windows.Media.Imaging.FormatConvertedBitmap]::new($image,[Windows.Media.PixelFormats]::Bgra32,$null,0)
+  $script:alphaStride=$image.PixelWidth*4;$script:alphaPixels=[byte[]]::new($script:alphaStride*$image.PixelHeight)
+  $converted.CopyPixels($script:alphaPixels,$script:alphaStride,0)
+  $script:bitmap=$image;$script:ui.Girl.Source=$image
+  if($script:peekOriginalImage){$script:peekOriginalImage.Source=$image}
+  if($script:widgetColors){$script:widgetColors.halo.OpacityMask.ImageSource=$image}
+}
 $script:status=$null
 $script:statusStamp=0
 $script:offsetRight=0.0;$script:offsetBottom=0.0;$script:offsetLeft=$null;$script:anchor='right';$script:side='right';$script:scale=1.0;$script:collapsed=$true
@@ -218,6 +236,7 @@ function Get-WidgetVisibleFrame {
   return $frame
 }
 function Set-WidgetPixelSize([double]$dpi){
+  if($script:ui.Girl){Update-WidgetCharacterBitmap $dpi}
   # Only the immutable design canvas participates in physical size calculation.
   $pixels=$script:designWidth*$script:displayScale*$dpi
   $pixelHeight=$script:designHeight*$script:displayScale*$dpi
@@ -558,10 +577,6 @@ if($Preview){
   $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($render))
   $stream=[IO.File]::Create((Join-Path $script:appDir 'preview.png'));try{$encoder.Save($stream)}finally{$stream.Dispose()};return
 }
-$mutexKey='Local\GPTNiangUsage_'+([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($script:appDir))).Replace('/','_').Replace('+','-')
-$script:mutex=[Threading.Mutex]::new($false,$mutexKey);$script:mutexOwned=$false
-try{$script:mutexOwned=$script:mutex.WaitOne(0)}catch [Threading.AbandonedMutexException]{$script:mutexOwned=$true}
-if(!$script:mutexOwned){Request-Refresh;$script:mutex.Dispose();return}
 Initialize-WidgetAudio -AppDir $script:appDir
 Remove-Item -LiteralPath (Join-Path $script:dataDir 'stop.flag') -ErrorAction SilentlyContinue
 $script:worker=$null
@@ -660,6 +675,7 @@ function Ensure-QuotaWorker([long]$now){
     finally{if($installer){$installer.Dispose()}}
     Remove-Item -LiteralPath $updateFlag
   }
+  if($script:workerRestartBlocked){return}
   if($now-$script:lastWorkerProbe-lt 5000){return}
   $script:lastWorkerProbe=$now
   $healthy=$false
@@ -685,6 +701,13 @@ function Ensure-QuotaWorker([long]$now){
     $script:worker.Dispose();$script:worker=$null
   }
   if($now-$script:lastWorkerStart-lt 5000){return}
+  $script:workerLaunches=@($script:workerLaunches|Where-Object{$null-ne $_ -and $now-[long]$_-lt 600000})
+  if($script:workerLaunches.Count-ge 3){
+    $script:workerRestartBlocked=$true
+    [IO.File]::WriteAllText((Join-Path $script:dataDir 'worker-error.txt'),'Quota worker stopped after 3 launches within 10 minutes. Restart the widget to retry.')
+    return
+  }
+  $script:workerLaunches+=@($now)
   $script:lastWorkerStart=$now
   $workerArgs=@(('"'+(Join-Path $script:appDir 'runtime\watch.mjs')+'"'),('"'+$script:configPath+'"'),[string]$PID)
   try{$script:worker=Start-Process -FilePath $script:config.nodePath -ArgumentList $workerArgs -WindowStyle Hidden -PassThru}
@@ -830,3 +853,8 @@ try{
   [IO.File]::WriteAllText((Join-Path $script:dataDir 'display-error.txt'),$_.Exception.ToString())
   throw
 }finally{Stop-WidgetRuntime}
+}finally{
+  # Also release the lock if initialization fails before Stop-WidgetRuntime exists.
+  if($script:mutexOwned){try{$script:mutex.ReleaseMutex()}catch{};$script:mutexOwned=$false}
+  if($script:mutex){$script:mutex.Dispose();$script:mutex=$null}
+}

@@ -2,6 +2,16 @@
 
 本改版由 [Jerryx64](https://github.com/Jerryx64) 维护，基于 **[T7moris/GPT-Niang](https://github.com/T7moris/GPT-Niang) v1.3.4**，基线提交为 [`b92159a`](https://github.com/T7moris/GPT-Niang/commit/b92159a93c131bd5ba4722d7f507ee04d633d5db)。原作者为 **T7moris**，原项目贡献者的历史、版权、许可和致谢均保留。
 
+## 1.4.0 内存与稳定性修复
+
+- Windows 常驻守护改为轻量 .NET 程序；使用系统自带编译器首次本地构建，后续复用，不再保留 PowerShell 守护进程。
+- 角色图片按实际显示大小和 DPI 解码，聊天列表仅展开时创建并在收起时释放；保留草稿，复用闲置侧边动画对象并减少重复窗口布局。
+- 同一用户只允许一个挂件和一个守护程序；挂件 10 分钟最多启动 3 次，异常后停用自动重试，用户通过“打开 GPT 娘”恢复。
+- Windows Job 限制受管进程单个提交内存为 384 MiB，守护、挂件及其子进程合计为 448 MiB；挂件超过 320 MiB 时主动停止并锁定重启。Codex 单独创建的 MCP 连接不属于此 Job，不能把 448 MiB 当作整个插件的绝对总上限。
+- 右键设置菜单及其子菜单在点击外部时关闭，可重新右键打开。
+- 内置更新固定使用 Jerryx64/GPT-Niang-Companion 的 Release；GitHub API 返回 403/429 时使用本仓库公开更新清单，仍校验下载来源、SHA256、版本和 ZIP 结构。
+- 保留原作者署名、素材声明、聊天入口、侧边陪伴及个人偏好；增加 /gpt-niang 技能入口。此次发布仅更新 Windows 实现。
+
 ## 本次新增的 Windows 功能
 
 | 功能 | 改进后的行为 |
