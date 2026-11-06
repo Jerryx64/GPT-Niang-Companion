@@ -23,10 +23,10 @@ function Get-WidgetInstallPreflight {
   $dataDir=[IO.Path]::GetFullPath($dataDir).TrimEnd('\')
   if($appDir-ieq $dataDir -or $appDir.StartsWith($dataDir+'\',[StringComparison]::OrdinalIgnoreCase) -or $dataDir.StartsWith((Join-Path $appDir 'runtime')+'\',[StringComparison]::OrdinalIgnoreCase) -or $dataDir-ieq (Join-Path $appDir 'runtime')){throw 'Data directory overlaps program files.'}
   $nodeCommand=Get-Command node.exe -ErrorAction SilentlyContinue
-  if(!$nodeCommand){throw 'Node.js 22.13 or later is required. Install Node.js and reopen the installer.'}
+  if(!$nodeCommand){throw 'Node.js 24 LTS or later is required. Install Node.js and reopen the installer.'}
   $node=$nodeCommand.Source
   $nodeMajor=[int]((& $node --version).TrimStart('v').Split('.')[0])
-  if($nodeMajor-lt 22 -or ($nodeMajor-eq 22 -and [int]((& $node --version).TrimStart('v').Split('.')[1])-lt 13)){throw 'Node.js 22.13 or later is required.'}
+  if($nodeMajor-lt 24){throw 'Node.js 24 LTS or later is required.'}
   $codexCommand=Get-Command codex.exe -ErrorAction SilentlyContinue
   $codex=if($codexCommand){$codexCommand.Source}else{$null}
   if(!$codex){

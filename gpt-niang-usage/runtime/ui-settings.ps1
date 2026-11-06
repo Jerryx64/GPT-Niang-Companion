@@ -48,7 +48,64 @@ function Open-QuoteEditor {
   $editor.Show()
 }
 
+function Initialize-WidgetMenuPointer {
+  if(!('GptNiangMenuPointer' -as [type])){Add-Type @'
+using System;using System.ComponentModel;using System.Runtime.InteropServices;
+public static class GptNiangMenuPointer {
+ [StructLayout(LayoutKind.Sequential)] public struct Point {public int X,Y;}
+ [StructLayout(LayoutKind.Sequential)] public struct Rect {public int Left,Top,Right,Bottom;}
+ delegate IntPtr HookProc(int code,IntPtr message,IntPtr data);
+ static readonly HookProc Callback=OnMouse;
+ static IntPtr hook,clickedWindow;static IntPtr[] windows=new IntPtr[0];static bool clicked;
+ [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SetWindowsHookEx(int id,HookProc callback,IntPtr module,uint thread);
+ [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr value);
+ [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr value,int code,IntPtr message,IntPtr data);
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern IntPtr GetModuleHandle(string name);
+ [DllImport("user32.dll")] static extern IntPtr WindowFromPhysicalPoint(Point point);
+ [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr window,uint flags);
+ [DllImport("user32.dll")] static extern bool GetCursorPos(out Point point);
+ [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window,out Rect rect);
+ [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);
+ [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window,IntPtr after,int x,int y,int width,int height,uint flags);
+ public static Point Cursor(){Point point;GetCursorPos(out point);return point;}
+ public static Rect Frame(IntPtr window){Rect rect;GetWindowRect(window,out rect);return rect;}
+ public static bool Active {get{return hook!=IntPtr.Zero;}}
+ public static void Targets(IntPtr[] values){windows=values;}
+ public static void Start(){Stop();hook=SetWindowsHookEx(14,Callback,GetModuleHandle(null),0);if(hook==IntPtr.Zero)throw new Win32Exception();}
+ public static void Stop(){if(hook!=IntPtr.Zero){UnhookWindowsHookEx(hook);hook=IntPtr.Zero;}clicked=false;windows=new IntPtr[0];}
+ public static bool TakeOutside(){if(!clicked)return false;clicked=false;foreach(IntPtr window in windows)if(window==clickedWindow)return false;return true;}
+ static IntPtr OnMouse(int code,IntPtr message,IntPtr data){
+  if(code>=0&&(message.ToInt32()==0x201||message.ToInt32()==0x204||message.ToInt32()==0x207||message.ToInt32()==0x20B)){
+   Point point=(Point)Marshal.PtrToStructure(data,typeof(Point));clickedWindow=GetAncestor(WindowFromPhysicalPoint(point),2);clicked=true;
+  }
+  return CallNextHookEx(hook,code,message,data);
+ }
+ public static int[] Position(int x,int y,int width,int height,int left,int top,int right,int bottom,int gap){
+  int px=x+gap;if(px+width>right-gap)px=x-width-gap;
+  return new[]{Math.Max(left+gap,Math.Min(px,right-width-gap)),Math.Max(top+gap,Math.Min(y,bottom-height-gap))};
+ }
+}
+'@}
+  if(!$script:menuPointerTimer){
+    $script:menuPointerTimer=New-Object Windows.Threading.DispatcherTimer
+    $script:menuPointerTimer.Interval=[TimeSpan]::FromMilliseconds(50)
+    $script:menuPointerTimer.Add_Tick({Update-WidgetMenuPointerTargets;if([GptNiangMenuPointer]::TakeOutside()){Close-WidgetSettingsMenu}})
+  }
+}
+function Update-WidgetMenuPointerTargets {
+  $handles=@()
+  $source=[Windows.Interop.HwndSource]::FromVisual($script:context)
+  if($source){$handles+=,$source.Handle}
+  foreach($item in $script:settingsSubmenus){
+    if(!$item.IsSubmenuOpen){continue}
+    $popup=$item.Template.FindName('PART_Popup',$item)
+    if($popup -and $popup.Child){$source=[Windows.Interop.HwndSource]::FromVisual($popup.Child);if($source){$handles+=,$source.Handle}}
+  }
+  [GptNiangMenuPointer]::Targets([IntPtr[]]$handles)
+}
+
 function Initialize-WidgetSettingsMenu {
+  Initialize-WidgetMenuPointer
   $script:settingsMenuResources=[Windows.Markup.XamlReader]::Parse(@'
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
  <Style x:Key="SettingsItem" TargetType="MenuItem">
@@ -104,16 +161,11 @@ function Initialize-WidgetSettingsMenu {
   $script:settingsMenuSync=$false;$script:settingsMenuUi=@{};$script:settingsSubmenus=@()
   $script:context=New-Object Windows.Controls.ContextMenu
   $script:context.StaysOpen=$false
-  # The pet uses non-activating windows. Explicit capture makes outside clicks
-  # dismiss the whole menu even when a different application keeps keyboard focus.
-  $script:context.AddHandler([Windows.Input.Mouse]::PreviewMouseDownOutsideCapturedElementEvent,[Windows.Input.MouseButtonEventHandler]{
-    param($sender,$event)
-    Close-WidgetSettingsMenu
-  })
-  $script:context.Add_Opened({
-    $null=$script:context.Dispatcher.BeginInvoke([Action]{
-      if($script:context.IsOpen){[Windows.Input.Mouse]::Capture($script:context,[Windows.Input.CaptureMode]::SubTree)|Out-Null}
-    },[Windows.Threading.DispatcherPriority]::Input)
+  # Keep ordinary WPF dismissal, with a native mouse observer for clicks that
+  # never reach this non-activating process. The hook never consumes input.
+  $script:context.Add_Closed({
+    $script:menuPointerTimer.Stop();[GptNiangMenuPointer]::Stop();$script:menuClickPoint=$null
+    foreach($submenu in $script:settingsSubmenus){$submenu.IsSubmenuOpen=$false}
   })
   $script:context.FontFamily=[Windows.Media.FontFamily]::new('Microsoft YaHei UI');$script:context.FontSize=14.5;$script:context.Width=328
   $script:context.MaxHeight=[Math]::Max(360,[Math]::Min(730,[Windows.SystemParameters]::WorkArea.Height-28))
@@ -227,7 +279,11 @@ function Initialize-WidgetSettingsMenu {
   } -ReturnItem
   Add-SettingsDivider
   $exit=Add-SettingsAction '退出 GPT 娘' {Exit-WidgetForSession} -ReturnItem;$exit.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#A1788D')
-  $script:context.Add_Opened({Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost});Update-WidgetSettingsMenu;$script:window.ContextMenu=$script:context
+  $script:context.Add_Opened({
+    $script:menuClickPoint=[GptNiangMenuPointer]::Cursor()
+    Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost
+    [GptNiangMenuPointer]::Start();Update-WidgetMenuPointerTargets;$script:menuPointerTimer.Start()
+  });Update-WidgetSettingsMenu;$script:window.ContextMenu=$script:context
 }
 
 function New-SettingsText([string]$Text,[double]$Size,[string]$Color){$t=New-Object Windows.Controls.TextBlock;$t.Text=$Text;$t.FontSize=$Size;$t.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($Color);return $t}
@@ -248,6 +304,7 @@ function Add-SettingsSubmenu {
   param([string]$Label,[scriptblock]$Content,[switch]$ReturnItem)
   $item=New-Object Windows.Controls.MenuItem;$item.Header=$Label;$item.Style=$script:settingsMenuResources['SettingsItem'];$item.Tag=[Windows.Controls.Primitives.PlacementMode]::Right
   $script:settingsMenuTarget.Items.Add($item)|Out-Null;$script:settingsSubmenus+=,$item
+  $item.Add_SubmenuOpened({Update-WidgetMenuPointerTargets})
   $previous=$script:settingsMenuTarget;$script:settingsMenuTarget=$item
   try{& $Content}finally{$script:settingsMenuTarget=$previous}
   if($ReturnItem){return $item}
@@ -295,6 +352,7 @@ function Update-WidgetSettingsMenu{
 }
 
 function Close-WidgetSettingsMenu {
+  $script:menuPointerTimer.Stop();[GptNiangMenuPointer]::Stop();$script:menuClickPoint=$null
   foreach($submenu in $script:settingsSubmenus){$submenu.IsSubmenuOpen=$false}
   $script:context.IsOpen=$false
 }
@@ -307,40 +365,31 @@ function Open-WidgetMenu {
 }
 
 function Set-WidgetMenuBounds {
-  $menuAnchor=Get-WidgetMenuAnchor
-  $script:context.PlacementTarget=$menuAnchor.Target
-  $script:context.Placement=if($menuAnchor.Side-eq 'left'){[Windows.Controls.Primitives.PlacementMode]::Right}else{[Windows.Controls.Primitives.PlacementMode]::Left}
-  $script:context.HorizontalOffset=if($menuAnchor.Side-eq 'left'){8}else{-8}
-  $script:context.VerticalOffset=0
-  foreach($submenu in $script:settingsSubmenus){$submenu.Tag=if($menuAnchor.Side-eq 'left'){[Windows.Controls.Primitives.PlacementMode]::Right}else{[Windows.Controls.Primitives.PlacementMode]::Left}}
-  try{
-    if(!$script:followHost -or ($script:hostHandle-ne [IntPtr]::Zero -and [GptWidgetNative]::IsWindow($script:hostHandle))){
-      $frame=$menuAnchor.Frame;$dpi=$menuAnchor.Dpi
-      $script:context.Width=[Math]::Max(180,[Math]::Min(328,($frame.Right-$frame.Left)/$dpi-16))
-      $script:context.MaxHeight=[Math]::Max(160,[Math]::Min(730,($frame.Bottom-$frame.Top)/$dpi-16))
-      $script:context.Resources['SettingsSubmenuWidth']=[double][Math]::Max(180,[Math]::Min(300,($frame.Right-$frame.Left)/$dpi-16))
-      $script:context.Resources['SettingsSubmenuMaxHeight']=[double][Math]::Max(160,[Math]::Min(600,($frame.Bottom-$frame.Top)/$dpi-16))
-    }
-  }catch{}
+  if(!$script:menuClickPoint){$script:menuClickPoint=[GptNiangMenuPointer]::Cursor()}
+  $point=$script:menuClickPoint
+  $frame=[Windows.Forms.Screen]::FromPoint([Drawing.Point]::new($point.X,$point.Y)).WorkingArea
+  $source=[Windows.Interop.HwndSource]::FromVisual($script:context)
+  $dpi=if($source){[GptNiangMenuPointer]::GetDpiForWindow($source.Handle)/96.0}else{1.0}
+  if($dpi-le 0){$dpi=1.0}
+  $script:context.Placement=[Windows.Controls.Primitives.PlacementMode]::MousePoint
+  $script:context.Width=[Math]::Max(180,[Math]::Min(328,$frame.Width/$dpi-16))
+  $script:context.MaxHeight=[Math]::Max(160,[Math]::Min(730,$frame.Height/$dpi-16))
+  $script:context.Resources['SettingsSubmenuWidth']=[double][Math]::Max(180,[Math]::Min(300,$frame.Width/$dpi-16))
+  $script:context.Resources['SettingsSubmenuMaxHeight']=[double][Math]::Max(160,[Math]::Min(600,$frame.Height/$dpi-16))
+  $side=if($point.X-lt ($frame.Left+$frame.Width/2)){[Windows.Controls.Primitives.PlacementMode]::Right}else{[Windows.Controls.Primitives.PlacementMode]::Left}
+  foreach($submenu in $script:settingsSubmenus){$submenu.Tag=$side}
 }
 
 function Position-WidgetMenuToHost {
-  # Move only our own popup; host geometry is read-only.
-  if(!$script:context.IsOpen){return}
-  try{
-    if($script:followHost -and ($script:hostHandle-eq [IntPtr]::Zero -or ![GptWidgetNative]::IsWindow($script:hostHandle))){return}
-    $script:context.UpdateLayout()
-    $source=[Windows.Interop.HwndSource]::FromVisual($script:context)
-    if(!$source -or $source.Handle-eq [IntPtr]::Zero){return}
-    $menuAnchor=Get-WidgetMenuAnchor
-    $frame=$menuAnchor.Frame;$menu=[GptWidgetNative]::Frame($source.Handle)
-    $dpi=$menuAnchor.Dpi
-    $margin=[int][Math]::Round(8*$dpi);$width=$menu.Right-$menu.Left;$height=$menu.Bottom-$menu.Top
-    $origin=$menuAnchor.Target.PointToScreen([Windows.Point]::new(0,0))
-    $edge=$menuAnchor.Target.PointToScreen([Windows.Point]::new($menuAnchor.Target.ActualWidth,0))
-    $desiredX=if($menuAnchor.Side-eq 'left'){[Math]::Max($origin.X,$edge.X)+$margin}else{[Math]::Min($origin.X,$edge.X)-$width-$margin}
-    $x=[int][Math]::Round([Math]::Max($frame.Left+$margin,[Math]::Min($frame.Right-$width-$margin,$desiredX)))
-    $y=[int][Math]::Round([Math]::Max($frame.Top+$margin,[Math]::Min($frame.Bottom-$height-$margin,$origin.Y)))
-    if($menu.Left-ne $x -or $menu.Top-ne $y){[GptWidgetNative]::SetWindowPos($source.Handle,[IntPtr]::Zero,$x,$y,0,0,0x15)|Out-Null}
-  }catch{}
+  # The opening click is the stable anchor, including while hovering submenus.
+  if(!$script:context.IsOpen -or !$script:menuClickPoint){return}
+  $script:context.UpdateLayout()
+  $source=[Windows.Interop.HwndSource]::FromVisual($script:context)
+  if(!$source -or $source.Handle-eq [IntPtr]::Zero){return}
+  $point=$script:menuClickPoint
+  $frame=[Windows.Forms.Screen]::FromPoint([Drawing.Point]::new($point.X,$point.Y)).WorkingArea
+  $menu=[GptNiangMenuPointer]::Frame($source.Handle)
+  $dpi=[GptNiangMenuPointer]::GetDpiForWindow($source.Handle)/96.0
+  $position=[GptNiangMenuPointer]::Position($point.X,$point.Y,($menu.Right-$menu.Left),($menu.Bottom-$menu.Top),$frame.Left,$frame.Top,$frame.Right,$frame.Bottom,[int][Math]::Round(8*$dpi))
+  if($menu.Left-ne $position[0] -or $menu.Top-ne $position[1]){[GptNiangMenuPointer]::SetWindowPos($source.Handle,[IntPtr]::Zero,$position[0],$position[1],0,0,0x15)|Out-Null}
 }

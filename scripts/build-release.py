@@ -98,7 +98,7 @@ notes = (
     "### 下载与更新\n\n"
     f"下载 **`{archive_name}`**，完整解压后运行根目录的 `安装GPT娘.cmd`。\n\n"
     "旧版用户请先备份自定义内容，在原目录覆盖新版文件，再运行安装器；保留原有偏好。\n\n"
-    "仅支持 Windows 10 / 11，需要 Node.js 22.13 或更新版本及已登录的 Codex 桌面端。\n\n"
+    "仅支持 Windows 10 / 11，需要 Node.js 24 LTS 或更新版本及已登录的 Codex 桌面端。\n\n"
     f"SHA256：`{digest}`（同时提供 `SHA256SUMS.txt`）。\n\n"
     f"### 致谢\n\n{credits}\n"
 )

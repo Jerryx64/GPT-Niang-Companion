@@ -9,7 +9,7 @@
     "test:windows": "powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File tests/run-windows-tests.ps1"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24.0"
   },
   "license": "MIT"
 }
