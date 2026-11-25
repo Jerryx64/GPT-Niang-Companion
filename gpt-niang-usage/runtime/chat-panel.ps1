@@ -95,16 +95,20 @@ function Update-WidgetChats {
   $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   $fresh=$script:chatSnapshot -and $script:chatSnapshot.ok -and $now-[long]$script:chatSnapshot.at-ge 0 -and $now-[long]$script:chatSnapshot.at-lt 15000
   $threads=@($script:chatSnapshot.threads|Where-Object{$null-ne $_})
-  $running=@($threads|Where-Object{$_.state-eq 'running'}).Count
-  $waiting=@($threads|Where-Object{$_.state-eq 'waiting'}).Count
-  $failed=@($threads|Where-Object{$_.state-eq 'failed'}).Count
-  $approval=@($threads|Where-Object{$_.state-eq 'waiting' -and $_.waitingKind-eq 'approval'}).Count
+  $running=0;$waiting=0;$failed=0;$approval=0;$latest=$null
+  foreach($thread in $threads){
+    switch($thread.state){
+      'running' {$running++}
+      'failed' {$failed++}
+      'waiting' {$waiting++;if($thread.waitingKind-eq 'approval'){$approval++}}
+    }
+    if(!$latest -or $thread.lastAt -gt $latest.lastAt){$latest=$thread}
+  }
   $question=$waiting-$approval
   if($fresh){
     $active=@($threads|Where-Object{$_.state-in @('running','waiting','failed')})
     $script:chatHasTasks=$active.Count-gt 0
     $script:chatTaskKey=($active|Sort-Object id|ForEach-Object{$_.id+':'+$_.startedAt+':'+$_.state+':'+$_.waitingKind+':'+$_.attentionId})-join ';'
-    $latest=$threads|Sort-Object lastAt -Descending|Select-Object -First 1
     $script:chatPrimary=if($approval){'approval'}elseif($question){'question'}elseif($failed){'failed'}elseif($running){'running'}elseif($latest.state-in @('completed','interrupted') -and $now-[long]$latest.lastAt-lt 60000){[string]$latest.state}else{'idle'}
   }
   $greetings=@{approval='老大，等你授权';question='老大，有个问题问你';failed='老大，这里卡住了';running='老大，我正在忙';completed='老大，忙完啦';interrupted='老大，任务已中断';idle='老大，随时喊我'}

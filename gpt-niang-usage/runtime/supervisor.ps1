@@ -1,4 +1,4 @@
-param([switch]$CheckOnly)
+param([switch]$CheckOnly,[switch]$Once)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'supervisor-task.ps1')
 $appDir=Split-Path $PSScriptRoot -Parent
@@ -10,5 +10,7 @@ if($CheckOnly){
 . (Join-Path $PSScriptRoot 'native-supervisor.ps1')
 $executable=Build-WidgetNativeSupervisor $info.AppDir $info.DataDir
 # Do not keep this PowerShell launcher resident beside the native watchdog.
-$process=Start-Process -FilePath $executable -ArgumentList @(('"'+$info.AppDir+'"'),('"'+$info.DataDir+'"')) -WindowStyle Hidden -PassThru
+$arguments=@(('"'+$info.AppDir+'"'),('"'+$info.DataDir+'"'))
+if($Once){$arguments+='--once'}
+$process=Start-Process -FilePath $executable -ArgumentList $arguments -WindowStyle Hidden -PassThru
 $process.Dispose()

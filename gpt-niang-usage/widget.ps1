@@ -101,7 +101,7 @@ public static class GptWidgetNative {
   public static string Title(IntPtr h){var b=new StringBuilder(256);GetWindowText(h,b,256);return b.ToString();}
 }
 public static class GptWidgetMemory {
-  static long nextCheck;
+  static long nextCheck, lastLiveBytes;
   public static int Collections {get;private set;}
   public static long BeforeBytes {get;private set;}
   public static long AfterBytes {get;private set;}
@@ -109,12 +109,18 @@ public static class GptWidgetMemory {
     if(now<nextCheck)return;
     nextCheck=now+5000;
     using(var process=Process.GetCurrentProcess()){
-      if(process.PrivateMemorySize64<256L*1024*1024)return;
-      BeforeBytes=process.PrivateMemorySize64;
+      const long MiB=1024*1024;
+      long current=process.PrivateMemorySize64;
+      if(current<176*MiB)return;
+      // Under moderate pressure collect only after substantial managed growth.
+      // Keep the original high-pressure fallback even with a small managed heap.
+      if(current<256*MiB && GC.GetTotalMemory(false)<Math.Max(48*MiB,lastLiveBytes+24*MiB))return;
+      BeforeBytes=current;
       // .NET Framework sizes its heap against system memory, not our lower Job budget.
       // Reclaim transient invocation/WPF objects before the 320 MiB emergency stop.
       // Do not wait for WPF finalizers on the Dispatcher thread.
       GC.Collect(2,GCCollectionMode.Forced,true);
+      lastLiveBytes=GC.GetTotalMemory(false);
       process.Refresh();AfterBytes=process.PrivateMemorySize64;
       Collections++;nextCheck=now+60000;
     }
@@ -339,14 +345,18 @@ function Tick-Scene([long]$now){
 }
 function Read-DisplayRequest {
   try{
-    $request=Get-Content -LiteralPath (Join-Path $script:dataDir 'display-request.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $file=Join-Path $script:dataDir 'display-request.json'
+    $stamp=[IO.File]::GetLastWriteTimeUtc($file).Ticks
+    if($stamp-eq $script:displayRequestStamp -or ![IO.File]::Exists($file)){return}
+    $request=[IO.File]::ReadAllText($file,[Text.Encoding]::UTF8) | ConvertFrom-Json
+    $script:displayRequestStamp=$stamp
     if($request.nonce -and $request.nonce-ne $script:displayRequestToken){
       $script:displayRequestToken=$request.nonce
       if([Math]::Abs([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-[long]$request.at)-lt 10000){
         if($request.mode-eq 'quota'){Show-Quota}
         elseif($request.mode-eq 'quote'){if($script:collapsed){Show-Quota};Switch-Scene 'quote'}
         elseif($request.mode-eq 'menu' -and ($script:window.IsVisible -or ($script:peekWindow -and $script:peekWindow.IsVisible))){Open-WidgetMenu}
-        elseif($request.mode-eq 'close-menu'){$script:context.IsOpen=$false}
+        elseif($request.mode-eq 'close-menu' -and $script:context){$script:context.IsOpen=$false}
       }
     }
   }catch{}
@@ -473,7 +483,9 @@ function Animate-Press([bool]$down) {
   Animate-Value $script:ui.PressScale ([Windows.Media.ScaleTransform]::ScaleXProperty) $x 220 0 $true
   Animate-Value $script:ui.PressScale ([Windows.Media.ScaleTransform]::ScaleYProperty) $y 220 0 $true
 }
-function Request-Refresh {[IO.File]::WriteAllText((Join-Path $script:dataDir 'refresh.flag'),([DateTime]::UtcNow.ToString('o')+' '+[Guid]::NewGuid().ToString('N')))}
+function Request-Refresh([switch]$RetryWorker) {
+  if($RetryWorker -and $script:workerRestartBlocked){$script:workerRetryRequested=$true}
+  [IO.File]::WriteAllText((Join-Path $script:dataDir 'refresh.flag'),([DateTime]::UtcNow.ToString('o')+' '+[Guid]::NewGuid().ToString('N')))}
 function Exit-WidgetForSession {
   if($script:followHost){Set-WidgetSupervisorPause -AppDir $script:appDir -HostHandle $script:hostHandle.ToInt64() -HostPid ([GptWidgetNative]::ProcessId($script:hostHandle))}
   else{Write-WidgetSupervisorJson (Join-Path $script:dataDir 'supervisor-pause.json') @{desktop=$true;at=[DateTime]::UtcNow.ToString('o')}}
@@ -592,6 +604,10 @@ function Update-Quota {
     else{$script:ui.Status.Text="$at 更新 · 实时订阅额度"}
   }
   $script:ui.LiveDot.Fill=[Windows.Media.BrushConverter]::new().ConvertFromString($dot)
+  if($script:workerRestartBlocked){
+    $retryTime=[DateTimeOffset]::FromUnixTimeMilliseconds($script:workerRetryAt).ToLocalTime().ToString('HH:mm:ss')
+    $script:ui.Status.Text=if($script:workerRetryRequested){"已安排重试 · $retryTime"}else{"额度服务暂停 · 点击刷新重试"}
+  }
   $script:ui.Status.ToolTip=$script:ui.Status.Text
   $headerState=if(!$script:status){'正在读取'}elseif(!$script:status.ok){'暂无法读取'}elseif($script:status.error -or $age-gt 180){'上次剩余额度'}else{'剩余额度'}
   $planTitle=([string]$script:status.planLabel).Trim()
@@ -611,7 +627,6 @@ if($Preview){
   $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($render))
   $stream=[IO.File]::Create((Join-Path $script:appDir 'preview.png'));try{$encoder.Save($stream)}finally{$stream.Dispose()};return
 }
-Initialize-WidgetAudio -AppDir $script:appDir
 Remove-Item -LiteralPath (Join-Path $script:dataDir 'stop.flag') -ErrorAction SilentlyContinue
 $script:worker=$null
 $script:lastWorkerProbe=0;$script:lastWorkerStart=0;$script:runtimeClosed=$false
@@ -641,9 +656,13 @@ $script:messageHook=[Windows.Interop.HwndSourceHook]{param($hwnd,$msg,$w,$l,[ref
 }
 $source.AddHook($script:messageHook)
 Initialize-WidgetUpdater
-Initialize-WidgetSettingsMenu
+# Let the usual WPF mouse and keyboard routes request the menu on first use.
+$script:window.ContextMenu=[Windows.Controls.ContextMenu]::new()
+$script:window.Add_ContextMenuOpening({param($sender,$event)
+  if(!$script:context){Open-WidgetMenu;$event.Handled=$true}
+})
 $script:ui.ChatButton.Add_Click({Open-WidgetChatPanel})
-$script:ui.Refresh.Add_Click({param($sender,$event)Request-Refresh;Restart-SceneTtl;$script:ui.Status.Text='正在刷新额度…';$event.Handled=$true})
+$script:ui.Refresh.Add_Click({param($sender,$event)Request-Refresh -RetryWorker;Restart-SceneTtl;$script:ui.Status.Text='正在刷新额度…';$event.Handled=$true})
 $script:ui.MenuButton.Add_Click({Open-WidgetMenu})
 $script:menuTimer=New-Object Windows.Threading.DispatcherTimer
 $script:menuTimer.Interval=[TimeSpan]::FromMilliseconds(180)
@@ -655,7 +674,6 @@ foreach($control in @($script:ui.Girl,$script:ui.MenuButton)){
   $control.Add_MouseEnter({$script:menuTimer.Stop();Set-MenuVisible $true})
   $control.Add_MouseLeave({$script:menuTimer.Start()})
 }
-$script:context.Add_Closed({$script:menuTimer.Start()})
 foreach($control in @($script:ui.Bubble,$script:ui.Tail,$script:ui.TailNear)){$control.Add_MouseLeftButtonUp({param($sender,$event)Next-Bubble;$event.Handled=$true})}
 $pressDown={param($sender,$event)
   $script:hostFollower.Suspend()
@@ -710,7 +728,11 @@ function Ensure-QuotaWorker([long]$now){
     finally{if($installer){$installer.Dispose()}}
     Remove-Item -LiteralPath $updateFlag
   }
-  if($script:workerRestartBlocked){return}
+  if($script:workerRestartBlocked){
+    if(!$script:workerRetryRequested -or $now -lt $script:workerRetryAt){return}
+    $script:workerRestartBlocked=$false
+    $script:workerRetryRequested=$false
+  }
   if($now-$script:lastWorkerProbe-lt 5000){return}
   $script:lastWorkerProbe=$now
   $healthy=$false
@@ -724,29 +746,34 @@ function Ensure-QuotaWorker([long]$now){
       if($healthy -and $health.parentPid){$parentProcess=Get-Process -Id ([int]$health.parentPid) -ErrorAction Stop;$parentProcess.Dispose()}
     }
   }catch{$healthy=$false}
-  if($healthy){return}
+  if($healthy){$script:workerUnhealthySince=$null;return}
   if($script:worker){
     try{
       if(!$script:worker.HasExited){
-        if($now-$script:lastWorkerStart-lt 10000){return}
+        # A snapshot can be locked, or a heartbeat briefly delayed during a scan.
+        if($null-eq $script:workerUnhealthySince){$script:workerUnhealthySince=$now}
+        if($now-$script:workerUnhealthySince-lt 15000){return}
+        $script:workerFailure='No confirmed heartbeat for 15 seconds.'
         $script:worker.Kill()
         if(!$script:worker.WaitForExit(1000)){return}
-      }
-    }catch{}
+      }else{$script:workerFailure='Worker exited with code '+$script:worker.ExitCode+'.'}
+    }catch{return}
     $script:worker.Dispose();$script:worker=$null
   }
   if($now-$script:lastWorkerStart-lt 5000){return}
   $script:workerLaunches=@($script:workerLaunches|Where-Object{$null-ne $_ -and $now-[long]$_-lt 600000})
   if($script:workerLaunches.Count-ge 3){
     $script:workerRestartBlocked=$true
-    [IO.File]::WriteAllText((Join-Path $script:dataDir 'worker-error.txt'),'Quota worker stopped after 3 launches within 10 minutes. Restart the widget to retry.')
+    $script:workerRetryAt=[long]$script:workerLaunches[0]+600000
+    [IO.File]::WriteAllText((Join-Path $script:dataDir 'worker-error.txt'),([DateTime]::UtcNow.ToString('o')+' '+$script:workerFailure+' Three starts in 10 minutes. Click Refresh to retry when the slot opens.'))
     return
   }
   $script:workerLaunches+=@($now)
   $script:lastWorkerStart=$now
+  $script:workerUnhealthySince=$null
   $workerArgs=@(('"'+(Join-Path $script:appDir 'runtime\watch.mjs')+'"'),('"'+$script:configPath+'"'),[string]$PID)
   try{$script:worker=Start-Process -FilePath $script:config.nodePath -ArgumentList $workerArgs -WindowStyle Hidden -PassThru}
-  catch{[IO.File]::WriteAllText((Join-Path $script:dataDir 'worker-error.txt'),$_.Exception.Message,[Text.UTF8Encoding]::new($false))}
+  catch{$script:workerFailure=$_.Exception.Message;[IO.File]::WriteAllText((Join-Path $script:dataDir 'worker-error.txt'),$script:workerFailure,[Text.UTF8Encoding]::new($false))}
 }
 function Stop-WidgetRuntime {
   if($script:runtimeClosed){return};$script:runtimeClosed=$true
@@ -792,9 +819,9 @@ function Tick-Widget {
   $placementFrame=if($visible){Get-WidgetPlacementFrame}else{$null}
   $placementDpi=if($visible){Get-WidgetPlacementDpi}else{1}
   $visible=$visible -and (Test-WidgetPlacementFrame $placementFrame $placementDpi)
-  if($script:window.IsVisible){Save-WidgetFullRoleBounds}
   $roleMode=Resolve-WidgetRoleMode $now ($script:foregroundHost-ne [IntPtr]::Zero) $script:foregroundOwn ($script:hostHandle-ne [IntPtr]::Zero) ($script:context.IsOpen -or [bool]$script:drag -or [bool]$script:peekDrag)
   if($roleMode-notin @('full','legacy')){
+    if($script:window.IsVisible){Save-WidgetFullRoleBounds}
     $visible=$false
     $script:hostFollower.Suspend()
     if($script:chatPanel -and $script:chatPanel.Owner){$script:chatPanel.Owner=$null}
@@ -839,14 +866,14 @@ function Tick-Widget {
   }elseif($script:window.IsVisible){
     if($script:chatPanel -and !$script:chatCollapseOnBlur){Set-WidgetChatMode 'hidden'}
     $script:hostFollower.Suspend()
-    $script:context.IsOpen=$false
+    if($script:context){$script:context.IsOpen=$false}
     # Also return any owned quote editor to the normal band before hiding the overlay.
     [GptWidgetNative]::SetWindowPos($script:widgetHandle,[IntPtr](-2),0,0,0,0,0x13)|Out-Null
     $script:window.Hide()
   }
   if($visible){Save-WidgetFullRoleBounds;if($roleMode-eq 'full'){Set-WidgetPeekMode 'full'}}
   if($now-$script:lastPresence-ge 1000){
-    Write-WidgetJson (Join-Path $script:dataDir 'presence.json') @{visible=[bool]$visible;at=$now;host=$script:hostHandle.ToInt64();widget=$script:widgetHandle.ToInt64();pid=$PID;followHost=$script:followHost;follow=@{ready=$script:hostFollower.Ready;events=$script:hostFollower.MovementEvents;mode='native-immediate';animationPaddingDip=14};scene=@{open=!$script:collapsed;mode=$script:bubbleMode;resetTimeMode=$script:resetTimeMode;startedAt=$script:sceneStartedAt;closesAt=$script:sceneDeadline;shortReset=$script:ui.ShortReset.Text;weekReset=$script:ui.WeekReset.Text};chat=@{mode=$script:chatState.mode;hasTasks=$script:chatHasTasks;primary=$script:chatPrimary;visible=[bool]($script:chatPanel -and $script:chatPanel.IsVisible);dotsAnimated=[bool]$script:chatDotsAnimated};role=@{mode=$roleMode;sizePx=140;side=$script:rolePeekSide;visible=[bool]($script:peekWindow -and $script:peekWindow.IsVisible);handle=$(if($script:peekHandle){$script:peekHandle.ToInt64()}else{0})}}
+    Write-WidgetJson (Join-Path $script:dataDir 'presence.json') @{visible=[bool]$visible;at=$now;host=$script:hostHandle.ToInt64();widget=$script:widgetHandle.ToInt64();pid=$PID;followHost=$script:followHost;memory=@{collections=[GptWidgetMemory]::Collections;beforeBytes=[GptWidgetMemory]::BeforeBytes;afterBytes=[GptWidgetMemory]::AfterBytes};follow=@{ready=$script:hostFollower.Ready;events=$script:hostFollower.MovementEvents;mode='native-immediate';animationPaddingDip=14};scene=@{open=!$script:collapsed;mode=$script:bubbleMode;resetTimeMode=$script:resetTimeMode;startedAt=$script:sceneStartedAt;closesAt=$script:sceneDeadline;shortReset=$script:ui.ShortReset.Text;weekReset=$script:ui.WeekReset.Text};chat=@{mode=$script:chatState.mode;hasTasks=$script:chatHasTasks;primary=$script:chatPrimary;visible=[bool]($script:chatPanel -and $script:chatPanel.IsVisible);dotsAnimated=[bool]$script:chatDotsAnimated};role=@{mode=$roleMode;sizePx=140;side=$script:rolePeekSide;visible=[bool]($script:peekWindow -and $script:peekWindow.IsVisible);handle=$(if($script:peekHandle){$script:peekHandle.ToInt64()}else{0})}}
     Update-Quota;Update-WidgetChats;$script:lastPresence=$now
     Read-DisplayRequest
   }
@@ -855,7 +882,7 @@ function Tick-Widget {
 }
 $script:winEventCallback=[GptWidgetNative]::FilterLifecycle([GptWidgetNative+WinEventProc]{param($hook,$ev,$hwnd,$objectId,$childId,$threadId,$time)
   if($hwnd-eq $script:hostHandle -and $objectId-eq 0 -and $childId-eq 0){
-    if($ev-eq 16){$script:context.IsOpen=$false}
+    if($ev-eq 16 -and $script:context){$script:context.IsOpen=$false}
   }
   if($ev-eq 3 -or ($objectId-eq 0 -and $childId-eq 0 -and ($hwnd-eq $script:hostHandle -or ($script:hostHandle-eq [IntPtr]::Zero -and [GptWidgetNative]::IsCodex($hwnd))))){
     # Native movement is immediate. Only lifecycle, DPI/resize and popup layout

@@ -41,9 +41,9 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 public static class PressureFixture {
  [MethodImpl(MethodImplOptions.NoInlining)]
- public static WeakReference Allocate(){
+ public static WeakReference Allocate(int targetMiB){
    long current;using(var p=Process.GetCurrentProcess()){current=p.PrivateMemorySize64;}
-   var bytes=new byte[Math.Max(16*1024*1024,280*1024*1024-current)];
+   var bytes=new byte[Math.Max(16*1024*1024,targetMiB*1024L*1024-current)];
    for(int i=0;i<bytes.Length;i+=4096)bytes[i]=1;
    return new WeakReference(bytes);
  }
@@ -52,9 +52,12 @@ public static class PressureFixture {
 [GC]::Collect()
 [GptWidgetMemory]::Check(0)
 if([GptWidgetMemory]::Collections-ne 0){throw 'Low memory caused unnecessary full collection.'}
-$garbage=[PressureFixture]::Allocate()
+$garbage=[PressureFixture]::Allocate(210)
 [GptWidgetMemory]::Check(6000)
 if([GptWidgetMemory]::Collections-ne 1 -or $garbage.IsAlive){throw 'Memory pressure did not reclaim unreachable data.'}
 [GptWidgetMemory]::Check(7000)
 if([GptWidgetMemory]::Collections-ne 1){throw 'Memory reclamation cooldown was ignored.'}
-'PASS: low memory skips GC; pressure reclaims temporary data; collection cooldown is bounded.'
+$high=[PressureFixture]::Allocate(280)
+[GptWidgetMemory]::Check(66001)
+if([GptWidgetMemory]::Collections-ne 2 -or $high.IsAlive){throw 'High-pressure fallback failed after cooldown.'}
+'PASS: moderate pressure and managed growth reclaim garbage; high pressure retains fallback; cooldown is bounded.'

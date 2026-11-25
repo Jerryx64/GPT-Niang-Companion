@@ -95,9 +95,11 @@ function Test-WidgetImageHit([Windows.Point]$Point,$Control,[byte[]]$Pixels,[int
 function Save-WidgetFullRoleBounds {
   if(!$script:window.IsVisible -or !$script:ui.Girl.IsVisible){return}
   $girl=$script:ui.Girl
-  $points=@($girl.PointToScreen([Windows.Point]::new(0,0)),$girl.PointToScreen([Windows.Point]::new($girl.ActualWidth,0)),$girl.PointToScreen([Windows.Point]::new(0,$girl.ActualHeight)),$girl.PointToScreen([Windows.Point]::new($girl.ActualWidth,$girl.ActualHeight)))
-  $left=($points.X|Measure-Object -Minimum).Minimum;$top=($points.Y|Measure-Object -Minimum).Minimum
-  $width=($points.X|Measure-Object -Maximum).Maximum-$left;$height=($points.Y|Measure-Object -Maximum).Maximum-$top
+  # The character canvas uses translation and scale (including horizontal mirroring).
+  $first=$girl.PointToScreen([Windows.Point]::new(0,0))
+  $last=$girl.PointToScreen([Windows.Point]::new($girl.ActualWidth,$girl.ActualHeight))
+  $left=[Math]::Min($first.X,$last.X);$top=[Math]::Min($first.Y,$last.Y)
+  $width=[Math]::Abs($last.X-$first.X);$height=[Math]::Abs($last.Y-$first.Y)
   if($width-ge 1 -and $height-ge 1){$script:fullRoleBounds=@{X=$left;Y=$top;Width=$width;Height=$height;Facing=$script:ui.FacingScale.ScaleX}}
   $nativeFrame=[GptWidgetNative]::Frame($script:widgetHandle)
   $script:fullRoleAnchor=@{X=$nativeFrame.Left;Y=$nativeFrame.Top;Width=$nativeFrame.Right-$nativeFrame.Left;Height=$nativeFrame.Bottom-$nativeFrame.Top}

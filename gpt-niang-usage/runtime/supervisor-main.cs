@@ -39,7 +39,10 @@ public static class GptNiangSupervisor {
    if (File.Exists(file)) File.Replace(temp, file, null); else File.Move(temp, file);
   } finally { if (File.Exists(temp)) File.Delete(temp); }
  }
- static void Block(string reason) { System.IO.File.WriteAllText(FileAt("resource-block.flag"), reason, Utf8); }
+ static void Block(string reason) {
+  System.IO.File.WriteAllText(FileAt("resource-block.flag"), reason, Utf8);
+  try { Write("last-resource-block.json", new { at = DateTime.UtcNow.ToString("o"), reason }); } catch (IOException) {}
+ }
  static DateTime Utc(string value) {
   return DateTime.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime();
  }
@@ -56,6 +59,13 @@ public static class GptNiangSupervisor {
  }
  static string Identity(Process process) {
   return process.Id + "|" + process.StartTime.ToUniversalTime().Ticks + "|" + app;
+ }
+ static bool StopOverBudget(Process process) {
+  long bytes = process.PrivateMemorySize64;
+  if (bytes <= 320L * 1024 * 1024) return false;
+  try { Block("Widget exceeded 320 MiB (" + bytes + " bytes). Use the launcher to resume."); }
+  finally { if (!process.HasExited) process.Kill(); }
+  return true;
  }
  static bool RunningWidget() {
   var runtime = Read("runtime.json");
@@ -80,11 +90,7 @@ public static class GptNiangSupervisor {
      }
      verifiedIdentity = identity;
     }
-    if (process.PrivateMemorySize64 > 320L * 1024 * 1024) {
-     Block("Widget exceeded 320 MiB. Stopped to protect the computer. Use the launcher to resume.");
-     process.Kill(); return false;
-    }
-    return true;
+    return !StopOverBudget(process);
    }
   } catch { return false; }
  }
@@ -104,17 +110,18 @@ public static class GptNiangSupervisor {
   recent.Add(now); Write("supervisor-launches.json", recent.Select(x => x.ToString("o")).ToArray());
   return true;
  }
- static Process StartWidget() {
+ static Process StartWidget(bool once = false) {
   var info = new ProcessStartInfo {
    FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
    Arguments = "-NoLogo -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + Path.Combine(app, "runtime\\start-widget.ps1") + "\" -WidgetPath \"" + Path.Combine(app, "widget.ps1") + "\"",
    WorkingDirectory = app, UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden
   };
+  if (once) info.EnvironmentVariables["GPT_NIANG_TEMPORARY_SESSION"] = "1";
   var process = Process.Start(info);
   try { verifiedIdentity = Identity(process); return process; }
   catch { process.Dispose(); throw; }
  }
- static void Run() {
+ static void Run(bool once) {
   int pid; string started;
   using (var self = Process.GetCurrentProcess()) { pid = self.Id; started = self.StartTime.ToUniversalTime().ToString("o"); }
   bool owned = false;
@@ -124,6 +131,37 @@ public static class GptNiangSupervisor {
    Process pending = null;
    try {
     GptNiangResourceJob.Enter("Local\\GPTNiangResources-" + sid, 384UL * 1024 * 1024, 448UL * 1024 * 1024);
+    // A manual session with disabled logon runs one child under the same limits.
+    // Leave saved automatic pause and restart history intact.
+    if (once) {
+     if (!RunningWidget()) {
+      using (var widget = StartWidget(true)) {
+       try {
+        DateTime nextSample = DateTime.MinValue;
+        while (!widget.WaitForExit(1500)) {
+         widget.Refresh();
+         if (widget.HasExited || StopOverBudget(widget)) break;
+         if (DateTime.UtcNow < nextSample) continue;
+         try {
+          Write("supervisor-status.json", new {
+           pid, processStartedAt = started, at = DateTime.UtcNow.ToString("o"), manualSession = true,
+           widgetRunning = RunningWidget(), paused = false, resourceBlocked = File.Exists(FileAt("resource-block.flag")),
+           processLimitMiB = 384, totalLimitMiB = 448, peakJobBytes = GptNiangResourceJob.Limits()[2],
+           implementation = "native-dotnet"
+          });
+         } catch (IOException) { /* Retry a busy status file on the next sample. */ }
+         nextSample = DateTime.UtcNow.AddSeconds(5);
+        }
+       } finally {
+        if (!widget.HasExited) widget.Kill();
+       }
+       widget.WaitForExit();
+       if (widget.ExitCode != 0)
+        throw new InvalidOperationException("Manual widget exited with code " + widget.ExitCode + ".");
+      }
+     }
+     return;
+    }
     DateTime nextLaunch = DateTime.MinValue, nextStatus = DateTime.MinValue;
     string previousHosts = "";
     while (!File.Exists(FileAt("supervisor-disabled.flag")) && !File.Exists(FileAt("supervisor-stop.flag"))) {
@@ -150,7 +188,7 @@ public static class GptNiangSupervisor {
        Write("supervisor-status.json", new {
         pid, processStartedAt = started, at = DateTime.UtcNow.ToString("o"),
         mainWindows = hosts.Length, visibleWindows = visible.Length, paused, widgetRunning = running,
-        resourceBlocked = blocked, processLimitMiB = 384, totalLimitMiB = 448,
+        resourceBlocked = blocked, peakJobBytes = GptNiangResourceJob.Limits()[2], processLimitMiB = 384, totalLimitMiB = 448,
         taskName = "GPT Niang Usage - " + sid, implementation = "native-dotnet"
        });
        nextStatus = DateTime.UtcNow.AddSeconds(5);
@@ -191,11 +229,12 @@ public static class GptNiangSupervisor {
  [STAThread] public static int Main(string[] args) {
   try {
    if (args.Length == 1 && args[0] == "--self-test") return SelfTest();
-   if (args.Length != 2) throw new ArgumentException("Expected app and data directories.");
+   bool once = args.Length == 3 && args[2] == "--once";
+   if (args.Length != 2 && !once) throw new ArgumentException("Expected app and data directories.");
    app = Path.GetFullPath(args[0]).TrimEnd(Path.DirectorySeparatorChar);
    data = Path.GetFullPath(args[1]); Directory.CreateDirectory(data);
    using (var identity = WindowsIdentity.GetCurrent()) sid = identity.User.Value;
-   Run(); return 0;
+   Run(once); return 0;
   } catch (Exception error) {
    if (data != null) try { System.IO.File.WriteAllText(FileAt("supervisor-error.txt"), error.ToString(), Utf8); } catch { }
    Console.Error.WriteLine(error.Message); return 1;

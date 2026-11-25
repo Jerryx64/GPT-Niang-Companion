@@ -1,2 +1,2 @@
 @echo off
-wscript.exe "%~dp0launch.vbs"
+wscript.exe "%~dp0launch.vbs" /manual

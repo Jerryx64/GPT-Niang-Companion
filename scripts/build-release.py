@@ -94,7 +94,7 @@ with zipfile.ZipFile(archive_path) as archive:
 digest = hashlib.sha256(archive_path.read_bytes()).hexdigest().upper()
 (dist / "SHA256SUMS.txt").write_text(f"{digest}  {archive_name}\n", encoding="utf-8")
 notes = (
-    f"## Companion v{version}（基于上游 v1.3.4）\n\n本改版由 Jerryx64 维护，原作者为 [T7moris](https://github.com/T7moris/GPT-Niang)。改进详见 [FORK-CHANGES.md](../FORK-CHANGES.md)。\n\n本改版更新说明：\n\n{changes}\n\n"
+    f"## Companion v{version}（基于上游 v1.3.4）\n\n本改版由 Jerryx64 维护，原作者为 [T7moris](https://github.com/T7moris/GPT-Niang)。改进详见 [FORK-CHANGES.md](https://github.com/Jerryx64/GPT-Niang-Companion/blob/v{version}/FORK-CHANGES.md)。\n\n本改版更新说明：\n\n{changes}\n\n"
     "### 下载与更新\n\n"
     f"下载 **`{archive_name}`**，完整解压后运行根目录的 `安装GPT娘.cmd`。\n\n"
     "旧版用户请先备份自定义内容，在原目录覆盖新版文件，再运行安装器；保留原有偏好。\n\n"

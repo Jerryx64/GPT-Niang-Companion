@@ -34,31 +34,65 @@ export class RolloutCounters {
     this.previous = next; this.lastAt = at;
   }
 }
+// Updates are synchronous. All monitored chats can reuse the same read buffer.
+const readChunk = Buffer.allocUnsafe(64 * 1024);
+const historyWindow = 4 * 1024 * 1024;
 export class RolloutTail {
-  constructor(file, makeCounters = () => new RolloutCounters()) { this.file = file; this.offset = 0; this.pending = ''; this.makeCounters = makeCounters; this.counters = makeCounters(); this.identity = null; }
+  constructor(file, makeCounters = () => new RolloutCounters()) {
+    this.file = file;
+    this.offset = 0;
+    this.pending = Buffer.alloc(0);
+    this.makeCounters = makeCounters;
+    this.counters = makeCounters();
+    this.identity = null;
+  }
   update() {
     const stat = fs.statSync(this.file);
     if (stat.ino !== this.identity || stat.size < this.offset) {
-      this.identity = stat.ino; this.offset = Math.max(0, stat.size - 4 * 1024 * 1024);
-      this.pending = ''; this.counters = this.makeCounters();
+      this.identity = stat.ino;
+      this.offset = Math.max(0, stat.size - historyWindow);
+      this.pending = Buffer.alloc(0);
+      this.counters = this.makeCounters();
       this.skipFirst = this.offset > 0;
     }
-    const remaining = Math.min(stat.size - this.offset, 4 * 1024 * 1024);
-    if (remaining <= 0) return this.counters;
-    const buffer = Buffer.alloc(remaining);
+    const end = Math.min(stat.size, this.offset + historyWindow);
+    if (this.offset >= end) return this.counters;
+    const parts = this.pending.length ? [this.pending] : [];
+    let length = this.pending.length;
     const fd = fs.openSync(this.file, 'r');
-    let count;
-    try { count = fs.readSync(fd, buffer, 0, remaining, this.offset); } finally { fs.closeSync(fd); }
-    this.offset += count;
-    // Counters/timestamps are ASCII; a partial UTF-8 content line is never emitted.
-    const lines = (this.pending + buffer.subarray(0, count).toString('utf8')).split('\n');
-    this.pending = lines.pop();
-    if (this.pending.length > 1024 * 1024) { this.pending = ''; this.skipFirst = true; }
-    if (this.skipFirst && lines.length) { lines.shift(); this.skipFirst = false; }
-    for (const line of lines) {
-      if (!line.includes('"event_msg"') && !line.includes('"response_item"')) continue;
-      try { this.counters.accept(JSON.parse(line)); } catch {}
-    }
+    try {
+      while (this.offset < end) {
+        const count = fs.readSync(fd, readChunk, 0, Math.min(readChunk.length, end - this.offset), this.offset);
+        if (!count) break;
+        this.offset += count;
+        const chunk = readChunk.subarray(0, count);
+        let start = 0;
+        while (start < count) {
+          const newline = chunk.indexOf(10, start);
+          const part = chunk.subarray(start, newline < 0 ? count : newline);
+          if (!this.skipFirst) {
+            if (newline < 0) {
+              parts.push(Buffer.from(part));
+              length += part.length;
+            } else {
+              const line = parts.length ? Buffer.concat([...parts, part], length + part.length) : part;
+              if (line.includes('"event_msg"') || line.includes('"response_item"')) {
+                try { this.counters.accept(JSON.parse(line.toString('utf8'))); } catch {}
+              }
+            }
+          }
+          if (newline < 0) break;
+          this.skipFirst = false;
+          parts.length = 0;
+          length = 0;
+          start = newline + 1;
+        }
+      }
+    } finally { fs.closeSync(fd); }
+    // Keep only the unfinished record between polls. Never retain a slice of a
+    // multi-megabyte decoded string for each monitored chat.
+    if (length > 1024 * 1024) this.skipFirst = true;
+    this.pending = !length || this.skipFirst ? Buffer.alloc(0) : parts.length === 1 ? parts[0] : Buffer.concat(parts, length);
     return this.counters;
   }
 }

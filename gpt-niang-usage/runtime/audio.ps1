@@ -158,9 +158,12 @@ function Initialize-WidgetAudio {
 }
 
 function Play-WidgetPressSound {
-    if ($null -eq $script:gptNiangAudio) { return }
-    Stop-WidgetAudio
     if (-not (Get-WidgetAudioEnabled) -or (Get-WidgetAudioVolume) -le 0) { return }
+    if ($null -eq $script:gptNiangAudio) {
+        Initialize-WidgetAudio -AppDir $script:appDir
+        if ($null -eq $script:gptNiangAudio) { return }
+    }
+    Stop-WidgetAudio
     $audio = $script:gptNiangAudio
     $audio.Pressing = $true
     $audio.PressEnded = $false

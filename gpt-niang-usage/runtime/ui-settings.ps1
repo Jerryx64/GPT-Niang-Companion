@@ -164,6 +164,7 @@ function Initialize-WidgetSettingsMenu {
   # Keep ordinary WPF dismissal, with a native mouse observer for clicks that
   # never reach this non-activating process. The hook never consumes input.
   $script:context.Add_Closed({
+    if($script:menuTimer){$script:menuTimer.Start()}
     $script:menuPointerTimer.Stop();[GptNiangMenuPointer]::Stop();$script:menuClickPoint=$null
     foreach($submenu in $script:settingsSubmenus){$submenu.IsSubmenuOpen=$false}
   })
@@ -199,7 +200,7 @@ function Initialize-WidgetSettingsMenu {
     Add-SettingsPanel $idle.Panel
   } -ReturnItem
   $script:settingsMenuUi.Quote=Add-SettingsAction '换一句台词' {if($script:collapsed){Show-Quota};Switch-Scene 'quote'} -ReturnItem
-  Add-SettingsAction '刷新额度' {Request-Refresh}
+  Add-SettingsAction '刷新额度' {Request-Refresh -RetryWorker}
   Add-SettingsAction '编辑我的语录' {Open-QuoteEditor}
   Add-SettingsDivider
   $script:settingsMenuUi.Display=Add-SettingsSubmenu '显示与位置' {
@@ -272,7 +273,7 @@ function Initialize-WidgetSettingsMenu {
   Add-SettingsDivider
   $script:settingsMenuUi.Updates=Add-SettingsSubmenu '更新' {
     $script:settingsMenuUi.UpdateVersion=Add-SettingsAction '当前版本' {} -ReturnItem;$script:settingsMenuUi.UpdateVersion.IsEnabled=$false
-    Add-SettingsAction '检查并更新' {Start-WidgetUpdate 'manual'}
+    $script:settingsMenuUi.UpdateNow=Add-SettingsAction '检查并更新' {Start-WidgetUpdate 'manual'} -ReturnItem
     $script:settingsMenuUi.AutoUpdate=Add-SettingsAction '自动更新' {param($sender,$event)Set-WidgetAutomaticUpdate ([bool]$sender.IsChecked)} -Checkable -ReturnItem
     $status=New-SettingsText '' 12 '#927AAB';$status.TextWrapping=[Windows.TextWrapping]::Wrap
     $script:settingsMenuUi.UpdateStatus=Add-SettingsPanel $status -Passive -ReturnItem
@@ -320,6 +321,7 @@ function Update-WidgetSizePresets{
   foreach($button in $script:settingsMenuUi.SizeButtons){$color=if([Math]::Abs([double]$button.Tag-$script:scale)-lt 0.05){'#E2D2EE'}else{'#F2ECF8'};$button.Background=[Windows.Media.BrushConverter]::new().ConvertFromString($color)}
 }
 function Update-WidgetSettingsMenu{
+  if(!$script:context){return}
   $script:settingsMenuSync=$true
   try{
     Update-WidgetUpdateMenu
@@ -358,6 +360,7 @@ function Close-WidgetSettingsMenu {
 }
 
 function Open-WidgetMenu {
+  if(!$script:context){Initialize-WidgetSettingsMenu}
   Set-WidgetMenuBounds
   Update-WidgetSettingsMenu
   $script:context.IsOpen=$true

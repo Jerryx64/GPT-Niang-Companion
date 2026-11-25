@@ -49,3 +49,21 @@ test('a new task excludes overnight human idle time and clears the old speed', (
   assert.equal(counters.latest.tokensPerSecond, 30);
   assert.equal(counters.state, 'running');
 });
+
+test('large records and split UTF-8 characters survive chunk and poll boundaries', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'niang-chunks-'));
+  t.after(() => fs.rmSync(root, {recursive: true, force: true}));
+  const file = path.join(root, 'chat.jsonl');
+  const record = {type: 'response_item', text: 'a'.repeat(180000) + '中'};
+  const bytes = Buffer.from(JSON.stringify(record) + '\n');
+  const split = bytes.indexOf(Buffer.from('中')) + 1;
+  fs.writeFileSync(file, bytes.subarray(0, split));
+  const seen = [];
+  const tail = new RolloutTail(file, () => ({accept: value => seen.push(value)}));
+  tail.update();
+  assert.equal(seen.length, 0);
+  fs.appendFileSync(file, bytes.subarray(split));
+  tail.update();
+  assert.deepEqual(seen, [record]);
+  assert.equal(tail.pending.length, 0);
+});

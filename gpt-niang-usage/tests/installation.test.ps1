@@ -86,6 +86,19 @@ try{
   Assert-Throws {& (Join-Path $moved 'Install.ps1') -CheckOnly} '*task action path mismatch*' 'foreign task is rejected during CheckOnly'
   Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes($configFile))-eq $initialConfigBytes) 'foreign task rejection preserves config'
 
+  # Both launch paths encounter the same disabled task and existing resource block.
+  Write-WidgetSupervisorJson $configFile @{appDir=$moved;dataDir=$data}
+  $global:widgetInstallerTestTasks=@([pscustomobject]@{TaskName=$info.TaskName;TaskPath=$info.TaskPath;State='Disabled';Principal=@{UserId=$info.Sid;LogonType='Interactive';RunLevel='Limited'};Actions=@(@{Execute=$info.Execute;Arguments=$info.Arguments;WorkingDirectory=$info.WorkingDirectory})})
+  function Start-ScheduledTask {throw 'Unexpected task start'}
+  function Enable-ScheduledTask {throw 'Unexpected task enable'}
+  $global:widgetTestOneShots=0
+  [IO.File]::WriteAllText((Join-Path $moved 'runtime\supervisor.ps1'),'param([switch]$Once);if(!$Once){throw "Expected single session"};$global:widgetTestOneShots++')
+  $block=Join-Path $data 'resource-block.flag'
+  [IO.File]::WriteAllText($block,'prior failure')
+  & (Join-Path $moved 'runtime\start-supervisor.ps1')
+  Assert ($global:widgetTestOneShots-eq 0 -and [IO.File]::Exists($block)) 'disabled logon leaves widget and block alone'
+  & (Join-Path $moved 'runtime\start-supervisor.ps1') -Manual
+  Assert ($global:widgetTestOneShots-eq 1 -and [IO.File]::ReadAllText($block)-eq 'prior failure') 'manual launch uses one supervised session and keeps prior evidence'
   $global:widgetInstallerTestTasks=@()
   $fakeCodex=Join-Path $testRoot 'codex-stub.cmd'
   [IO.File]::WriteAllText($fakeCodex,"@exit /b 0`r`n",[Text.UTF8Encoding]::new($false))

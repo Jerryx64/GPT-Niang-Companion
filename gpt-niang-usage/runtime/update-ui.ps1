@@ -1,4 +1,5 @@
 function Initialize-WidgetUpdater {
+  $script:updatesDeferred=$env:GPT_NIANG_TEMPORARY_SESSION -eq '1'
   $script:updateProcess=$null;$script:updateLastTick=0;$script:updateStartedAt=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();$script:updateCleanupChecked=$false
   $preferences=Read-WidgetUpdateJson (Join-Path $script:dataDir 'update-preferences.json')
   $script:autoUpdate=!($preferences -and $preferences.automatic-eq $false)
@@ -7,6 +8,7 @@ function Test-WidgetUpdateEditor {
   return [bool](($script:quoteEditor -and $script:quoteEditor.IsVisible) -or ($script:colorTriggerEditor -and $script:colorTriggerEditor.IsVisible) -or ($script:chatPanel -and $script:chatPanel.IsVisible))
 }
 function Start-WidgetUpdate([string]$Mode='manual') {
+  if($script:updatesDeferred){return}
   if($script:updateProcess){if(!$script:updateProcess.HasExited){return};$script:updateProcess.Dispose();$script:updateProcess=$null}
   if($Mode-eq 'manual' -and (Test-WidgetUpdateEditor)){
     [Windows.MessageBox]::Show($script:window,'请先保存并关闭编辑窗口，再检查更新。','GPT 娘更新')|Out-Null;return
@@ -30,6 +32,12 @@ function Update-WidgetUpdateMenu {
   if(!$script:settingsMenuUi.UpdateVersion){return}
   $script:settingsMenuUi.UpdateVersion.Header='当前版本：'+$script:config.version
   $script:settingsMenuUi.AutoUpdate.IsChecked=$script:autoUpdate
+  if($script:updatesDeferred){
+    $script:settingsMenuUi.UpdateNow.IsEnabled=$false
+    $script:settingsMenuUi.AutoUpdate.IsEnabled=$false
+    $script:settingsMenuUi.UpdateStatus.Header.Text='临时运行期间暂停安装更新'
+    return
+  }
   $state=Read-WidgetUpdateJson (Join-Path $script:dataDir 'update-status.json')
   $label=switch($state.phase){
     'checking' {'正在检查正式版…'}
@@ -51,6 +59,7 @@ function Update-WidgetUpdateMenu {
 function Tick-WidgetUpdater([long]$Now) {
   if($Now-$script:updateLastTick-lt 1000){return};$script:updateLastTick=$Now
   Write-WidgetSupervisorJson (Join-Path $script:dataDir 'update-idle.json') @{at=$Now;pid=$PID;editor=(Test-WidgetUpdateEditor);menu=[bool]$script:context.IsOpen;drag=[bool]($script:drag -or $script:peekDrag)}
+  if($script:updatesDeferred){return}
   if($script:updateProcess -and $script:updateProcess.HasExited){
     if($script:updateProcess.ExitCode-ne 0){Write-WidgetSupervisorJson (Join-Path $script:dataDir 'update-status.json') @{phase='failed';message='更新进程异常退出，请检查安装配置后再重试。';nextCheckAt=$Now+86400000}}
     $script:updateProcess.Dispose();$script:updateProcess=$null

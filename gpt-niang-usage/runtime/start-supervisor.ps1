@@ -1,10 +1,17 @@
+param([switch]$Manual)
 $ErrorActionPreference='Stop'
 $appDir=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'supervisor-task.ps1')
 try{
   $info=Get-WidgetSupervisorInfo $appDir
   $installed=Get-WidgetSupervisorTask $info
-  if($installed){Start-WidgetSupervisorTask $appDir}else{Register-WidgetSupervisorTask $appDir|Out-Null}
+  if(!$Manual -and (!$installed -or [string]$installed.State-eq 'Disabled')){return}
+  if($installed -and [string]$installed.State-eq 'Disabled'){
+    & (Join-Path $PSScriptRoot 'supervisor.ps1') -Once
+  }elseif($installed){
+    if($Manual){Start-WidgetSupervisorTask $appDir}
+    else{Start-ScheduledTask -TaskName $info.TaskName -TaskPath $info.TaskPath -ErrorAction Stop}
+  }else{Register-WidgetSupervisorTask $appDir|Out-Null}
   [IO.File]::WriteAllText((Join-Path $info.DataDir 'refresh.flag'),([DateTime]::UtcNow.ToString('o')+' '+[Guid]::NewGuid().ToString('N')))
   Remove-Item -LiteralPath (Join-Path $info.DataDir 'supervisor-start-error.txt') -ErrorAction SilentlyContinue
 }catch{

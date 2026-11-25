@@ -217,6 +217,11 @@ try {
   $script:updateStartedAt=$now-30000;$script:updateLastTick=0
   Tick-WidgetUpdater $now
   Assert ($script:startedModes.Count-eq 1 -and $script:startedModes[0]-eq 'cleanup') 'startup retries cleanup even when automatic updates are disabled'
+  $script:updatesDeferred=$true;$script:startedModes.Clear();$script:autoUpdate=$true
+  $script:updateCleanupChecked=$false
+  Tick-WidgetUpdater ([DateTimeOffset]::UtcNow.AddMinutes(2).ToUnixTimeMilliseconds())
+  Assert ($script:startedModes.Count-eq 0) 'temporary session never spawns an updater that could re-register logon'
+
   Write-Output ("All $checks isolated Windows updater assertions passed.")
 } finally {
   Assert-WidgetUpdateChildPath $testRoot ([IO.Path]::GetTempPath())

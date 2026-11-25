@@ -24,7 +24,7 @@ $source=[IO.File]::ReadAllText($widgetFile,[Text.Encoding]::UTF8)
 $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw 'The widget source has PowerShell parse errors.'}
-foreach($functionName in @('Ensure-QuotaWorker','Stop-WidgetRuntime')){
+foreach($functionName in @('Ensure-QuotaWorker','Stop-WidgetRuntime','Request-Refresh')){
   $definition=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name-eq $functionName},$true)
   if(!$definition){throw ('Missing lifecycle function: '+$functionName)}
   . ([scriptblock]::Create($definition.Extent.Text))
@@ -54,7 +54,7 @@ fs.writeFileSync(path.join(config.dataDir,'worker.lock'),JSON.stringify(owner));
 function heartbeat(){
   const file=path.join(config.dataDir,'worker-status.json'),temp=file+'.'+process.pid+'.tmp';
   fs.writeFileSync(temp,JSON.stringify({...owner,at:Date.now()}));
-  fs.renameSync(temp,file);
+  try { fs.renameSync(temp,file); } catch(error) { if (!['EPERM','EACCES','EBUSY'].includes(error.code)) throw error; }
 }
 heartbeat();
 setInterval(heartbeat,100);
@@ -75,6 +75,25 @@ setInterval(heartbeat,100);
   $script:lastWorkerProbe=0
   Ensure-QuotaWorker ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
   Assert-Lifecycle ($script:worker.Id-eq $firstPid) 'A healthy worker was duplicated.'
+
+  # One stale heartbeat from a busy worker must not kill a long-running process.
+  $script:lastWorkerStart=0;$script:lastWorkerProbe=0
+  Ensure-QuotaWorker ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+9000)
+  Assert-Lifecycle (!$script:worker.HasExited -and $script:worker.Id-eq $firstPid) 'One delayed heartbeat killed a live worker.'
+  $script:lastWorkerProbe=0
+  Ensure-QuotaWorker ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+  Assert-Lifecycle ($null-eq $script:workerUnhealthySince) 'A fresh heartbeat did not clear the grace period.'
+
+  $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  $script:workerRestartBlocked=$true;$script:workerRetryAt=$now+600000
+  Request-Refresh
+  Assert-Lifecycle (!$script:workerRetryRequested) 'Automatic refresh reset the restart budget.'
+  Request-Refresh -RetryWorker
+  Ensure-QuotaWorker $now
+  Assert-Lifecycle ($script:workerRestartBlocked -and $script:workerRetryRequested) 'Manual retry bypassed the restart limit.'
+  $script:workerRetryAt=$now
+  Ensure-QuotaWorker $now
+  Assert-Lifecycle (!$script:workerRestartBlocked -and !$script:workerRetryRequested) 'Manual retry did not resume the worker.'
 
   $script:worker.Kill()
   $null=$script:worker.WaitForExit(2000)
